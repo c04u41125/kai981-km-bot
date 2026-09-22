@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#171918">
+  <meta name="description" content="迴眾 KAI 9.81 團隊知識與活動入口。已確認的答案，清楚的來源。">
+  <title>迴眾 KM Bot · KAI 9.81</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="masthead"><a class="logo" href="#">迴眾<span>KAI 9.81</span></a><nav aria-label="主導覽"><a href="#knowledge">團隊知識</a><a href="#activities">活動報名</a><a href="#about">關於</a></nav><span class="edition">KM BOT / PHASE 01</span></header>
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy"><p class="eyebrow"><span class="dot"></span> 同一份共識，讓每個人接得上。</p><h1 id="hero-title">不同的動作。<br>共同的<span>引力。</span></h1><p class="intro">隊規、品牌、活動與報名。<br>把已確認的資訊放在一起，讓下一步更清楚。</p><a class="button primary" href="#knowledge">開始查詢 <span>↗</span></a><p class="slogan">SAME GRAVITY<br>DIFFERENT MOVES</p></div>
+      <div class="gravity" aria-hidden="true"><span class="orbit one"></span><span class="orbit two"></span><span class="orbit three"></span><span class="axis"></span><div class="gravity-number">9.81<small>KAI / 迴眾</small></div><span class="coordinate">COLLECTIVE KNOWLEDGE<br>SHARED DIRECTION</span></div>
+    </section>
+    <div class="strip"><span>01 / 確認後才回答</span><span>02 / 每個答案有來源</span><span>03 / 全隊共用資料</span></div>
+    <section class="section knowledge-layout" id="knowledge">
+      <div class="section-heading"><p class="eyebrow">01 — KNOWLEDGE</p><h2>有依據，<br>才有答案。</h2><p>查詢隊規與品牌資料。沒有已確認資料時，我們會明確告訴你。</p><div class="policy"><span>確定性查詢</span><p>第一階段使用已建立的問題別名，不使用生成式 AI，也不推測答案。</p></div></div>
+      <div class="chat-panel"><div class="chat-header"><span class="bot-icon">迴</span><div><strong>迴眾 KM Bot</strong><small id="connection">正在連接共用知識庫…</small></div><span class="phase">PHASE 01</span></div><div class="chat-log" id="chat-log" role="log" aria-live="polite" aria-label="知識查詢對話"><div class="message bot">你好，這裡是迴眾的共用知識入口。<br>你可以從下方選擇主題，或輸入已建立的問題別名。</div></div><div class="suggestions" aria-label="常用問題"><button type="button" data-question="新成員加入">新成員加入 ↗</button><button type="button" data-question="品牌對外活動">品牌對外活動 ↗</button><button type="button" data-question="管理事項">管理事項 ↗</button><button type="button" data-question="品牌資料">品牌資料 ↗</button></div><form id="query-form"><label class="sr-only" for="question">想查詢的問題</label><input id="question" name="question" maxlength="200" required placeholder="輸入問題，例如：入群規範" autocomplete="off"><button type="submit" aria-label="送出問題">↗</button></form><p class="form-note">待補問題請透過 LINE 提問，網頁查詢不會建立紀錄。</p></div>
+    </section>
+    <section class="section" id="activities"><div class="section-top"><div><p class="eyebrow">02 — GET TOGETHER</p><h2>下一次，一起。</h2></div><button type="button" class="text-button" id="refresh">重新整理 ↻</button></div><p class="section-description">活動時間、地點與名額，以共用資料庫的已確認資訊為準。</p><div id="activity-list" class="activity-list" aria-live="polite"><p class="empty">正在讀取活動…</p></div><div class="line-callout"><div><strong>報名，從 LINE 開始。</strong><p>輸入「我要報名」→ 選擇活動 → 輸入「姓名 你的姓名」。<br>名額內為正取，額滿後列入候補；同一帳號不會重複報名。</p></div><a class="button primary" id="line-link" hidden>開啟 LINE ↗</a><span id="line-unconfigured">LINE 帳號連結尚未設定</span></div></section>
+    <section class="section about" id="about"><p class="eyebrow">03 — OUR COMMON GROUND</p><h2>迴眾 <span>/ KAI 9.81</span></h2><p>SAME GRAVITY DIFFERENT MOVES</p><small>來源：品牌資料第 1 條｜隊名、品牌語與標語</small></section>
+  </main><footer><a class="logo" href="#">迴眾<span>KAI 9.81</span></a><p>共同的知識，持續累積。</p><span>PHASE 01 · RULE-BASED</span></footer>
+</body>
+</html>
