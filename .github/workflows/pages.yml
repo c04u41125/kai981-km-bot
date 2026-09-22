@@ -1,0 +1,44 @@
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/configure-pages@v5
+      - name: Configure public URLs
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          LINE_ADD_FRIEND_URL: ${{ vars.LINE_ADD_FRIEND_URL }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          const api = process.env.API_BASE_URL || '';
+          const line = process.env.LINE_ADD_FRIEND_URL || '';
+          if (api && new URL(api).protocol !== 'https:') throw new Error('API_BASE_URL must use HTTPS');
+          if (line && (new URL(line).protocol !== 'https:' || !['line.me','lin.ee'].includes(new URL(line).hostname))) throw new Error('Invalid LINE public URL');
+          writeFileSync('public/config.js', 'window.KM_CONFIG = Object.freeze(' + JSON.stringify({API_BASE_URL: api, LINE_ADD_FRIEND_URL: line}) + ');\n');
+          NODE
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: public
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
