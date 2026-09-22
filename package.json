@@ -1,0 +1,12 @@
+{
+  "name": "kai981-km-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "dev:web": "wrangler pages dev --cwd pages --port 8788",
+    "db:local": "wrangler d1 migrations apply DB --local"
+  },
+  "devDependencies": { "wrangler": "^4.0.0" }
+}

@@ -1,0 +1,5 @@
+# 僅供本機；實際檔案 .dev.vars 不可提交。
+LINE_CHANNEL_SECRET=replace_locally
+LINE_CHANNEL_ACCESS_TOKEN=replace_locally
+# 以逗號分隔；空白表示拒絕所有管理操作。
+ADMIN_LINE_USER_IDS=

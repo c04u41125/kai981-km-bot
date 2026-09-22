@@ -1,0 +1,14 @@
+name = "kai981-km-bot"
+main = "src/worker.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[vars]
+PUBLIC_ORIGIN = "http://localhost:8788"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "kai981-km"
+# 僅為本機開發用佔位值；建立遠端 D1 後填入其 UUID。
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
