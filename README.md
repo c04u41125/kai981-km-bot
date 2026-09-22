@@ -6,7 +6,9 @@ SAME GRAVITY DIFFERENT MOVES
 
 本次檢查的原始工作目錄只有空的 `outputs/`、`work/`，沒有 `AGENTS.md`、README 或既有 `kai981-km-bot/index.html`。因此本版依已提供的品牌文字新建米白、墨黑、萊姆綠介面，並非對不存在的原型進行視覺還原。前端入口為 `public/index.html`。
 
-**目前狀態：已安裝套件並產生 package-lock.json；依最新需求加入 GitHub Pages 部署工作流程，已建立 GitHub 儲存庫 c04u41125/kai981-km-bot，正在設定發布。尚未部署，未建立任何雲端資源、未執行自動化測試、未與真實 LINE Channel 連線驗證。**
+**目前狀態：GitHub Pages 前端已於 2026-09-22 發布成功。Worker／D1 尚未部署，LINE 尚未串接；網站會明確顯示後端尚未設定。未執行自動化測試。**
+
+[開啟網站](https://c04u41125.github.io/kai981-km-bot/) · [GitHub 儲存庫](https://github.com/c04u41125/kai981-km-bot) · [首次成功部署](https://github.com/c04u41125/kai981-km-bot/actions/runs/35730196792)
 
 前端部署 GitHub Pages 請先看 [GITHUB_DEPLOY.md](GITHUB_DEPLOY.md)。下方 Cloudflare 說明仍適用於 Worker 與 D1；前端的 Cloudflare Pages 發布步驟可略過。
 
