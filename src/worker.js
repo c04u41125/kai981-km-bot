@@ -1,11 +1,13 @@
 import { monitorCommand, monitorStatus, scheduledMonitor } from './monitor.js';
+import { scheduledG3, g3Status, g3Weekend } from './g3.js';
 const COMMAND_HELP = String.raw`可用指令：
 1. 建立賽事／活動（管理員）：建立賽事 YYYY-MM-DD 賽事名稱
 2. 報名賽事／活動：我要報名，接著姓名 王小明 電話 0912345678
 3. 查詢賽事／活動：活動 或 查詢活動
 4. 查詢隊規：隊規
 5. 查詢官網：官網
-6. 查詢指令：指令`;
+6. 查詢指令：指令
+G3 官方賽程：本週G3、G3狀態`;
 const UNKNOWN = '目前沒有已確認資料';
 const HELP = COMMAND_HELP;
 const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[\s？?。！!]/g, '');
@@ -178,6 +180,11 @@ async function buildReply(db, env, event) {
   const source = event.source;
   const user = source.userId;
   const context = user ? JSON.stringify([source.type, source.groupId || source.roomId || user, user]) : null;
+  if (['本週G3','本週g3','G3','g3'].includes(text)) return p.commit((await g3Weekend(db)).text);
+  if (['G3狀態','g3狀態'].includes(text)) {
+    const s = await g3Status(db);
+    return p.commit(`G3 賽程：${s.period_start || '未讀取'}～${s.period_end || '未讀取'}\n已記錄 ${s.events} 場\n最後更新：${s.last_success ? new Date(s.last_success * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '尚未完成'}\n來源狀態：${s.last_error || '正常'}\n每週一台灣時間 09:00 推播至已啟用 /monitor on 的群組。`);
+  }
   if (text.startsWith('/monitor')) return monitorCommand(db, env, event, text, p);
   if (text.startsWith('/admin')) return adminPlan(db, env, event, text, p);
   if (text === '指令' || text === '說明' || text === 'help' || text === '幫助') return p.commit(COMMAND_HELP);
@@ -307,6 +314,7 @@ async function webhook(request, env, db) {
 export default {
   async scheduled(controller, env, ctx) {
     ctx.waitUntil(scheduledMonitor(env));
+    if (new Date(controller.scheduledTime).getUTCMinutes() % 5 === 0) ctx.waitUntil(scheduledG3(env, controller.scheduledTime));
   },
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -324,6 +332,7 @@ export default {
           response = validString(q, 200) ? json(await knowledge(db, q)) : json({ error: '請輸入 1–200 字問題' }, 400);
         } else if (url.pathname === '/api/activities') response = json({ activities: await activities(db) });
         else if (url.pathname === '/api/monitor') response = json(await monitorStatus(db));
+        else if (url.pathname === '/api/g3') response = json(await g3Status(db));
         else response = json({ error: 'Not found' }, 404);
       } else response = json({ error: 'Not found' }, 404);
     } catch (error) {
