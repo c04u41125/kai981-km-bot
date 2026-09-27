@@ -2,11 +2,13 @@
 
 SAME GRAVITY DIFFERENT MOVES
 
+新增：每 5 分鐘監測 Funbox 指定分類並推播至管理員訂閱的 LINE 群組。首次只建立基準；完整設定、限制與指令見 [MONITOR.md](MONITOR.md)。新增 `src/monitor.js`、`migrations/0003_product_monitor.sql`、唯讀 `/api/monitor` 與 Worker Cron。活動報名功能不包含活動推播；商品通知則使用獨立 Push API。
+
 第一階段可串接 LINE 的團隊知識與活動報名專案。前端為 Cloudflare Pages 靜態網站，後端為 Cloudflare Worker，資料存於 Cloudflare D1。不使用生成式 AI。
 
 本次檢查的原始工作目錄只有空的 `outputs/`、`work/`，沒有 `AGENTS.md`、README 或既有 `kai981-km-bot/index.html`。因此本版依已提供的品牌文字新建米白、墨黑、萊姆綠介面，並非對不存在的原型進行視覺還原。前端入口為 `public/index.html`。
 
-**目前狀態：GitHub Pages 前端已於 2026-09-22 發布成功。Worker／D1 尚未部署，LINE 尚未串接；網站會明確顯示後端尚未設定。未執行自動化測試。**
+**目前狀態：GitHub Pages 前端已於 2026-09-22 發布成功。Worker／D1 已部署，網站已設定共用後端網址；LINE 尚待設定 Channel Secrets。未執行自動化測試。**
 
 [開啟網站](https://c04u41125.github.io/kai981-km-bot/) · [GitHub 儲存庫](https://github.com/c04u41125/kai981-km-bot) · [首次成功部署](https://github.com/c04u41125/kai981-km-bot/actions/runs/35730196792)
 
@@ -57,7 +59,7 @@ Worker 預設位於 `http://localhost:8787`。範本中的秘密值為佔位文�
 npm run dev:web
 ```
 
-開啟 `http://localhost:8788`。前端 `public/config.js` 預設指向本機 Worker；Worker `PUBLIC_ORIGIN` 預設允許 `http://localhost:8788`。請一致使用 `localhost`，不要混用 `127.0.0.1`。本機 D1 與遠端 D1 完全分開，初始化只會建立四筆知識，不會捏造活動。
+開啟 `http://localhost:8788`。前端 `public/config.js` 預設指向本機 Worker；Worker `PUBLIC_ORIGIN` 正式設定為 `https://c04u41125.github.io`；本機開發請在 `.dev.vars` 加入 `PUBLIC_ORIGIN="http://localhost:8788"`。請一致使用 `localhost`，不要混用 `127.0.0.1`。本機 D1 與遠端 D1 完全分開，初始化只會建立四筆知識，不會捏造活動。
 
 ## 2. 建立 LINE Official Account 與 Messaging API Channel
 

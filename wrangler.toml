@@ -3,12 +3,14 @@ main = "src/worker.js"
 compatibility_date = "2026-09-01"
 workers_dev = true
 
+[triggers]
+crons = ["*/5 * * * *"]
+
 [vars]
-PUBLIC_ORIGIN = "http://localhost:8788"
+PUBLIC_ORIGIN = "https://c04u41125.github.io"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "kai981-km"
-# 僅為本機開發用佔位值；建立遠端 D1 後填入其 UUID。
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "42b1967c-9b52-4fc2-ad4e-e39246f1a93b"
 migrations_dir = "migrations"
