@@ -111,13 +111,13 @@ function setSession(p, eventId, context, phase, activityId, choices = []) {
 async function adminPlan(db, env, event, text, p) {
   const user = event.source.userId;
   const admins = (env.ADMIN_LINE_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-  if (event.source.type !== 'user' || !user || !admins.includes(user)) return p.commit('管理操作已拒絕：僅允許白名單管理員透過 LINE 私訊操作。');
+  if (!['user','group','room'].includes(event.source.type) || !user || !admins.includes(user)) return p.commit('管理操作已拒絕：需要管理員白名單。');
   if (text === '/admin pending') {
     const rows = (await db.prepare("SELECT id,question FROM pending_questions WHERE status='pending' ORDER BY id DESC LIMIT 10").all()).results;
     return p.commit(rows.length ? rows.map(r => `#${r.id} ${r.question.slice(0, 300)}`).join('\n') : '目前沒有待補問題。');
   }
-  const match = text.match(/^\/admin (knowledge|activity|close|resolve)\s+([\s\S]+)$/);
-  if (!match) return p.commit('管理指令：/admin pending、/admin knowledge {JSON}、/admin activity {JSON}、/admin close 活動ID、/admin resolve 問題ID。格式請見 README。');
+  const match = text.match(/^\/admin (knowledge|activity|close|delete|resolve)\s+([\s\S]+)$/);
+  if (!match) return p.commit('管理指令：/admin pending、/admin knowledge {JSON}、/admin activity {JSON}、/admin close 活動ID（或 delete）、/admin resolve 問題ID。格式請見 README。');
   const [, action, payload] = match;
   let data;
   try { if (action === 'knowledge' || action === 'activity') data = JSON.parse(payload); }
@@ -134,7 +134,7 @@ async function adminPlan(db, env, event, text, p) {
     p.add(`INSERT INTO activities(id,title,starts_at,location,capacity,status,source,created_event_id)
       SELECT ?,?,?,?,?,?,?,? WHERE ${p.guard} ON CONFLICT(id) DO NOTHING`,
     data.id, data.title.trim(), new Date(data.starts_at).toISOString(), data.location.trim(), data.capacity, data.status, data.source.trim(), event.webhookEventId, event.webhookEventId);
-  } else if (action === 'close') {
+  } else if (action === 'close' || action === 'delete') {
     if (!keyPattern.test(payload) || !await stmt(db, 'SELECT id FROM activities WHERE id=?', payload).first()) return p.commit('找不到該活動，未修改資料。');
     p.add(`UPDATE activities SET status='closed' WHERE id=? AND ${p.guard}`, payload, event.webhookEventId);
   } else {
@@ -211,6 +211,9 @@ async function buildReply(db, env, event) {
   }
   const answer = await knowledge(db, text);
   if (!answer.confirmed) {
+    if (/^(\/|我要|建立|新增|刪除|關閉|取消|選擇|姓名|查詢|活動|隊規|品牌|管理)/.test(text)) {
+      return p.commit(`目前沒有已確認資料。\n\n${HELP}`);
+    }
     p.add(`INSERT INTO pending_questions(event_id,question,source_type) SELECT ?,?,? WHERE ${p.guard}`, eventId, text, source.type, eventId);
     return p.commit(`${UNKNOWN}，此問題已記入待補問題清單。\n可輸入「隊規」「品牌資料」「活動」查詢。${session ? '\n報名中請使用「選擇 活動ID」或「姓名 你的姓名」。' : ''}`);
   }

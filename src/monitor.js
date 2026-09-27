@@ -4,7 +4,7 @@ const sql = (db, query, ...args) => db.prepare(query).bind(...args);
 export async function monitorStatus(db) {
   const state = await db.prepare("SELECT initialized,last_success,last_error FROM monitor_state WHERE id='funbox'").first();
   const count = await db.prepare('SELECT COUNT(*) AS count FROM monitor_products').first();
-  return { source: SOURCE, interval_minutes: 5, ...state, known_products: count.count };
+  return { source: SOURCE, interval_minutes: 1, ...state, known_products: count.count };
 }
 
 // 此指令僅接受已驗證簽章事件；群組目的地不能由文字指定。
