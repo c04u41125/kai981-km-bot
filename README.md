@@ -10,7 +10,7 @@ SAME GRAVITY DIFFERENT MOVES
 
 **目前狀態：GitHub Pages 前端已於 2026-09-22 發布成功。Worker／D1 已部署，網站已設定共用後端網址；LINE 尚待設定 Channel Secrets。未執行自動化測試。**
 
-[開啟網站](https://c04u41125.github.io/kai981-km-bot/) · [GitHub 儲存庫](https://github.com/c04u41125/kai981-km-bot) · [首次成功部署](https://github.com/c04u41125/kai981-km-bot/actions/runs/35730196792)
+[官網](https://c04u41125.github.io/KAI-981/) · [Bot 專案頁](https://c04u41125.github.io/kai981-km-bot/) · [GitHub 儲存庫](https://github.com/c04u41125/kai981-km-bot) · [首次成功部署](https://github.com/c04u41125/kai981-km-bot/actions/runs/35730196792)
 
 前端部署 GitHub Pages 請先看 [GITHUB_DEPLOY.md](GITHUB_DEPLOY.md)。下方 Cloudflare 說明仍適用於 Worker 與 D1；前端的 Cloudflare Pages 發布步驟可略過。
 

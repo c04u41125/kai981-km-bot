@@ -2,7 +2,8 @@
 
 日期：2026-09-22
 
-- 公開網站：https://c04u41125.github.io/kai981-km-bot/
+- 官網：https://c04u41125.github.io/KAI-981/
+- Bot 專案頁：https://c04u41125.github.io/kai981-km-bot/
 - 儲存庫：https://github.com/c04u41125/kai981-km-bot
 - 首次發布工作流程：https://github.com/c04u41125/kai981-km-bot/actions/runs/35730196792
 - 發布結果：Success；已實際開啟網站，確認品牌首頁與「後端尚未設定」狀態。
