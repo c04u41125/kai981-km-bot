@@ -2,7 +2,7 @@
 
 SAME GRAVITY DIFFERENT MOVES
 
-新增：每 5 分鐘監測 Funbox 指定分類並推播至管理員訂閱的 LINE 群組。首次只建立基準；完整設定、限制與指令見 [MONITOR.md](MONITOR.md)。新增 `src/monitor.js`、`migrations/0003_product_monitor.sql`、唯讀 `/api/monitor` 與 Worker Cron。活動報名功能不包含活動推播；商品通知則使用獨立 Push API。
+新增：每分鐘監測 Funbox 指定分類並推播至管理員訂閱的 LINE 群組。首次只建立基準；完整設定、限制與指令見 [MONITOR.md](MONITOR.md)。新增 `src/monitor.js`、`migrations/0003_product_monitor.sql`、唯讀 `/api/monitor` 與 Worker Cron。活動報名功能不包含活動推播；商品通知則使用獨立 Push API。
 
 第一階段可串接 LINE 的團隊知識與活動報名專案。前端為 Cloudflare Pages 靜態網站，後端為 Cloudflare Worker，資料存於 Cloudflare D1。不使用生成式 AI。
 
@@ -160,9 +160,9 @@ LINE 不能直接連到 localhost。本機可先做網頁查詢，真實 LINE We
 
 只有 `status=open` 且開始時間尚未到達的活動接受報名。日期儲存為 UTC ISO 8601，顯示的 `Z` 代表 UTC，台灣時間為 UTC+8。活動列表一次最多讀取 30 場；第一階段適用小型活動清單。候補按報名記錄 `id` 順序，沒有自動遞補、取消報名、付款或推播功能；需要時由管理員另行協調，不能推測報名已獲准。
 
-## 8. 管理員操作：只接受已簽章 LINE 私訊
+## 8. 管理員操作：只接受已簽章 LINE 事件
 
-以下指令只有 `ADMIN_LINE_USER_IDS` 白名單中的使用者可在 Bot **私訊**執行。群組一律拒絕管理操作，避免待補問題外洩。未設定白名單時預設拒絕。`POST /api/...` 不提供任何管理或報名寫入能力。
+以下指令只有 `ADMIN_LINE_USER_IDS` 白名單中的使用者可執行。知識、待補問題等管理仍建議使用私訊；活動建立與關閉可在群組 @Bot 後操作，讓群組成員看到最新活動。一般群組訊息不會進入處理流程。未設定白名單時預設拒絕。`POST /api/...` 不提供任何管理或報名寫入能力。
 
 ### 查看與處理待補問題
 
@@ -188,7 +188,10 @@ LINE 不能直接連到 localhost。本機可先做網頁查詢，真實 LINE We
 ```text
 /admin activity {"id":"training-01","title":"已確認活動名稱","starts_at":"2030-01-20T14:00:00+08:00","location":"已確認地點","capacity":20,"status":"open","source":"已核准活動公告編號"}
 /admin close training-01
+/admin delete training-01
 ```
+
+`close` 與 `delete` 都是保留報名紀錄的軟關閉，不會從 D1 硬刪除活動或報名資料；活動不再出現在開放報名清單。群組中使用時必須先 @Bot。
 
 id 僅接受小寫英數、底線、連字號，最長 40 字。名額 1–10000；時間必須含時區且在未來。相同 id 不覆寫活動，避免修改名額造成既有正取資料失衡。第一階段提供新增與關閉，沒有一般活動修改 API；如必須修改活動時間／名額，應由具有 Cloudflare D1 權限的維護者先核對既有報名並備份，再處理異動。資料庫直接維護權限透過 Cloudflare 帳號權限管理，不經公開網站。
 

@@ -1,6 +1,6 @@
 # Funbox 新品群組推播
 
-來源：https://shop.funbox.com.tw/categories/XI/KB 。使用該頁自身的公開 JSON 分類介面，每 5 分鐘由 Cloudflare Worker Cron 檢查，不依賴電腦或 Codex 自動化。這是輪詢，不能保證秒級即時；來源快取、排程、網路、LINE 配額及待送量可能延遲通知。
+來源：https://shop.funbox.com.tw/categories/XI/KB 。使用該頁自身的公開 JSON 分類介面，每分鐘由 Cloudflare Worker Cron 檢查，不依賴電腦或 Codex 自動化。這是高頻輪詢，不能保證秒級即時；來源快取、排程、網路、LINE 配額及待送量可能延遲通知。
 
 「新品」代表分類首次發現的商品 ID，不等於確認的官方上架時間。首次完整掃描只建基準、不推播舊品。改名、補貨、下架後重新出現不重送。指定分類可能包含兌換商品，全部納入，不推測庫存、價格或可購買狀態。
 
