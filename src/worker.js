@@ -20,6 +20,21 @@ function replyMessages(text) {
   return messages;
 }
 
+function groupMentioned(event) {
+  if (event.source?.type !== 'group' && event.source?.type !== 'room') return true;
+  return Array.isArray(event.message?.mention?.mentionees) && event.message.mention.mentionees.some(m => m.isSelf === true);
+}
+
+function removeBotMention(event) {
+  const text = event.message.text;
+  const mentionees = (event.message.mention?.mentionees || [])
+    .filter(m => m.isSelf === true && Number.isInteger(m.index) && Number.isInteger(m.length) && m.index >= 0 && m.length > 0)
+    .sort((a, b) => b.index - a.index);
+  let result = text;
+  for (const m of mentionees) result = result.slice(0, m.index) + result.slice(m.index + m.length);
+  return result.trim();
+}
+
 async function verifySignature(raw, signature, secret) {
   if (!secret || !signature || !/^[A-Za-z0-9+/]{43}=$/.test(signature)) return false;
   const bytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
@@ -136,7 +151,8 @@ async function buildReply(db, env, event) {
   const existing = await stmt(db, 'SELECT * FROM webhook_events WHERE event_id=?', eventId).first();
   if (existing) return existing;
   const p = planFor(db, eventId);
-  const text = event.message.text.trim();
+  const text = removeBotMention(event);
+  if (!text) return p.commit('請在 @Bot 後輸入問題或指令。');
   const source = event.source;
   const user = source.userId;
   const context = user ? JSON.stringify([source.type, source.groupId || source.roomId || user, user]) : null;
@@ -234,6 +250,8 @@ function eligible(event) {
   if (s.type === 'group' && !validString(s.groupId, 100)) return false;
   if (s.type === 'room' && !validString(s.roomId, 100)) return false;
   if (s.userId !== undefined && !validString(s.userId, 100)) return false;
+  // 群組／多人聊天室平常聊天不進入查詢、待補問題或回覆流程；只有 LINE 明確標記 Bot 被提及才處理。
+  if (!groupMentioned(event)) return false;
   return true;
 }
 
