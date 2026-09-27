@@ -2,6 +2,8 @@
 
 SAME GRAVITY DIFFERENT MOVES
 
+新增官方 G3 賽程：奇數月 1 日更新當期兩個月，週一 09:00（台灣時間）通知嘉義市、新北市樹林區、宜蘭縣當週六日場次；推播前重新核對官方公開試算表。沿用已訂閱商品通知群組，操作與來源維護見 [G3.md](G3.md)。
+
 新增：每分鐘監測 Funbox 指定分類並推播至管理員訂閱的 LINE 群組。首次只建立基準；完整設定、限制與指令見 [MONITOR.md](MONITOR.md)。新增 `src/monitor.js`、`migrations/0003_product_monitor.sql`、唯讀 `/api/monitor` 與 Worker Cron。活動報名功能不包含活動推播；商品通知則使用獨立 Push API。
 
 第一階段可串接 LINE 的團隊知識與活動報名專案。前端為 Cloudflare Pages 靜態網站，後端為 Cloudflare Worker，資料存於 Cloudflare D1。不使用生成式 AI。
