@@ -1,3 +1,4 @@
+import { monitorCommand, monitorStatus, scheduledMonitor } from './monitor.js';
 const UNKNOWN = '目前沒有已確認資料';
 const HELP = '迴眾 KM Bot｜KAI 9.81\n可輸入：隊規、品牌資料、活動、我要報名、我的報名、取消。\n報名姓名請輸入「姓名 王小明」。\n知識查詢採確定性比對，不使用生成式 AI。';
 const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[\s？?。！!]/g, '');
@@ -139,6 +140,7 @@ async function buildReply(db, env, event) {
   const source = event.source;
   const user = source.userId;
   const context = user ? JSON.stringify([source.type, source.groupId || source.roomId || user, user]) : null;
+  if (text.startsWith('/monitor')) return monitorCommand(db, env, event, text, p);
   if (text.startsWith('/admin')) return adminPlan(db, env, event, text, p);
   if (['說明','help','幫助'].includes(text)) return p.commit(HELP);
   if (text === '取消') {
@@ -257,6 +259,9 @@ async function webhook(request, env, db) {
 }
 
 export default {
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(scheduledMonitor(env));
+  },
   async fetch(request, env) {
     const url = new URL(request.url);
     const origin = request.headers.get('Origin');
@@ -272,6 +277,7 @@ export default {
           const q = url.searchParams.get('q') || '';
           response = validString(q, 200) ? json(await knowledge(db, q)) : json({ error: '請輸入 1–200 字問題' }, 400);
         } else if (url.pathname === '/api/activities') response = json({ activities: await activities(db) });
+        else if (url.pathname === '/api/monitor') response = json(await monitorStatus(db));
         else response = json({ error: 'Not found' }, 404);
       } else response = json({ error: 'Not found' }, 404);
     } catch (error) {
