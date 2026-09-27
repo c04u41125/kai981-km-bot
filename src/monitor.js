@@ -34,12 +34,13 @@ async function catalog() {
   for (let page = 1; page <= 20; page++) {
     const response = await fetch(`https://shop.funbox.com.tw/category_products/XI/KB.json?limit=18&page=${page}&sort_by=sell_from-desc`, {
       headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000), redirect: 'error'
-    });
+    }).catch(() => { throw new Error('SOURCE_NETWORK_ERROR'); });
     if (!response.ok) throw new Error('SOURCE_HTTP_ERROR');
     if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('SOURCE_FORMAT_CHANGED');
     const raw = await response.text();
     if (raw.length > 2000000) throw new Error('SOURCE_TOO_LARGE');
-    const rows = JSON.parse(raw);
+    let rows;
+    try { rows = JSON.parse(raw); } catch { throw new Error('SOURCE_INVALID_JSON'); }
     if (!Array.isArray(rows) || rows.length > 18) throw new Error('SOURCE_FORMAT_CHANGED');
     for (const row of rows) {
       if (!Number.isSafeInteger(row.id) || row.id <= 0 || typeof row.title !== 'string' || !row.title.trim() || row.title.length > 500 || typeof row.url !== 'string') throw new Error('SOURCE_FORMAT_CHANGED');
@@ -73,7 +74,12 @@ async function scan(db, owner) {
       ON CONFLICT(product_id) DO UPDATE SET title=excluded.title,url=excluded.url`, p.id, p.title, p.url, owner));
   }
   queries.push(sql(db, `UPDATE monitor_state SET initialized=1,last_success=unixepoch(),last_error=NULL WHERE id='funbox' AND lease_owner=? AND lease_until>unixepoch()`, owner));
-  await db.batch(queries);
+  try { await db.batch(queries); }
+  catch (error) {
+    // 本區僅有公開商品 SQL，不包含 LINE 憑證或收件者值。
+    console.error(JSON.stringify({ code: 'MONITOR_DATABASE_ERROR', detail: String(error.message).slice(0, 200) }));
+    throw new Error('SOURCE_DATABASE_ERROR');
+  }
 }
 
 async function deliver(db, env, owner) {
