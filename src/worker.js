@@ -31,7 +31,11 @@ function replyMessages(text) {
 
 function groupMentioned(event) {
   if (event.source?.type !== 'group' && event.source?.type !== 'room') return true;
-  return Array.isArray(event.message?.mention?.mentionees) && event.message.mention.mentionees.some(m => m.isSelf === true);
+  const mentions = event.message?.mention?.mentionees;
+  if (!Array.isArray(mentions)) return false;
+  // LINE 的全體提及優先忽略；即使同時 @Bot，也不執行指令、記錄或回覆。
+  if (mentions.some(m => m?.type === 'all')) return false;
+  return mentions.some(m => m?.isSelf === true);
 }
 
 function removeBotMention(event) {
