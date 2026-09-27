@@ -1,4 +1,14 @@
 const config = window.KM_CONFIG;
+async function loadMonitor() {
+  const el = document.querySelector('#monitor-status');
+  try {
+    const state = await api('/api/monitor');
+    const time = state.last_success ? new Date(state.last_success * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '尚未完成首次掃描';
+    const stale = !state.last_success || Date.now() / 1000 - state.last_success > 900;
+    el.textContent = `已記錄 ${state.known_products} 件｜最後成功（台灣時間）：${time}。${state.last_error || stale ? '監測尚未就緒或資料已延遲，請管理員查看狀態。' : '分類檢查正常。'} LINE 推播需完成憑證設定並由管理員在群組訂閱。`;
+  } catch { el.textContent = '目前無法取得監測狀態，請稍後重新整理。'; }
+}
+loadMonitor();
 const log = document.querySelector('#chat-log');
 const form = document.querySelector('#query-form');
 const input = document.querySelector('#question');
