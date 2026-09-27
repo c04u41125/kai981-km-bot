@@ -7,7 +7,7 @@ const COMMAND_HELP = String.raw`可用指令：
 5. 查詢官網：官網
 6. 查詢指令：指令`;
 const UNKNOWN = '目前沒有已確認資料';
-const HELP = '迴眾 KM Bot｜KAI 9.81\n可輸入：隊規、品牌資料、活動、我要報名、我的報名、取消。\n報名姓名請輸入「姓名 王小明」。\n知識查詢採確定性比對，不使用生成式 AI。';
+const HELP = COMMAND_HELP;
 const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[\s？?。！!]/g, '');
 const stmt = (db, sql, ...args) => db.prepare(sql).bind(...args);
 const json = (data, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -201,7 +201,7 @@ async function buildReply(db, env, event) {
     if (!rows.length) return p.commit(`${UNKNOWN}：目前沒有可報名的活動。`);
     if (rows.length === 1) {
       setSession(p, eventId, context, 'name', rows[0].id);
-      return p.commit(`${activityText(rows[0])}\n\n請在 15 分鐘內輸入「姓名 你的姓名」。${source.type !== 'user' ? '\n注意：群組內的姓名訊息會被群組成員看到，也可以改用私訊重新輸入「我要報名」。' : ''}`);
+      return p.commit(`${activityText(rows[0])}\n\n請在 15 分鐘內輸入「姓名 王小明 電話 0912345678」。${source.type !== 'user' ? '\n注意：群組內的姓名與電話會被群組成員看到，也可以改用私訊重新輸入「我要報名」。' : ''}`);
     }
     setSession(p, eventId, context, 'choose', null, rows.map(r => r.id));
     return p.commit(`請在 15 分鐘內輸入「選擇 活動ID」：\n\n${rows.map(activityText).join('\n\n')}`);
@@ -214,7 +214,7 @@ async function buildReply(db, env, event) {
     const row = (await activities(db, true)).find(r => r.id === id);
     if (!row) return p.commit('該活動目前無法報名，請重新輸入「我要報名」。');
     setSession(p, eventId, context, 'name', id);
-    return p.commit(`已選擇 ${row.title}。請輸入「姓名 你的姓名」。群組內的訊息會被群組成員看到。`);
+    return p.commit(`已選擇 ${row.title}。請輸入「姓名 王小明 電話 0912345678」。群組內的姓名與電話會被群組成員看到。`);
   }
   if (text.startsWith('姓名 ')) {
     if (!session || session.phase !== 'name') return p.commit('報名對話不存在或已逾時，請輸入「我要報名」。');
@@ -240,7 +240,7 @@ async function buildReply(db, env, event) {
       return p.commit(`目前沒有已確認資料。\n\n${HELP}`);
     }
     p.add(`INSERT INTO pending_questions(event_id,question,source_type) SELECT ?,?,? WHERE ${p.guard}`, eventId, text, source.type, eventId);
-    return p.commit(`${UNKNOWN}，此問題已記入待補問題清單。\n可輸入「隊規」「品牌資料」「活動」查詢。${session ? '\n報名中請使用「選擇 活動ID」或「姓名 你的姓名」。' : ''}`);
+      return p.commit(`${UNKNOWN}，此問題已記入待補問題清單。\n\n${COMMAND_HELP}${session ? '\n報名中請使用「選擇 活動ID」或「姓名 王小明 電話 0912345678」。' : ''}`);
   }
   return p.commit(answer.text);
 }
