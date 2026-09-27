@@ -1,4 +1,11 @@
 import { monitorCommand, monitorStatus, scheduledMonitor } from './monitor.js';
+const COMMAND_HELP = String.raw`可用指令：
+1. 建立賽事／活動（管理員）：建立賽事 YYYY-MM-DD 賽事名稱
+2. 報名賽事／活動：我要報名，接著姓名 王小明 電話 0912345678
+3. 查詢賽事／活動：活動 或 查詢活動
+4. 查詢隊規：隊規
+5. 查詢官網：官網
+6. 查詢指令：指令`;
 const UNKNOWN = '目前沒有已確認資料';
 const HELP = '迴眾 KM Bot｜KAI 9.81\n可輸入：隊規、品牌資料、活動、我要報名、我的報名、取消。\n報名姓名請輸入「姓名 王小明」。\n知識查詢採確定性比對，不使用生成式 AI。';
 const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[\s？?。！!]/g, '');
@@ -146,6 +153,21 @@ async function adminPlan(db, env, event, text, p) {
   return p.commit('管理操作完成。');
 }
 
+async function quickActivityPlan(db, env, event, text, p) {
+  const admins = (env.ADMIN_LINE_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!admins.includes(event.source.userId)) return p.commit('建立活動已拒絕：需要管理員白名單。');
+  const match = text.match(/^建立(?:賽事|活動)\s+(\d{4}-\d{2}-\d{2})\s+(.+)$/);
+  if (!match) return p.commit('格式：建立賽事 YYYY-MM-DD 賽事名稱');
+  const [, date, title] = match;
+  const timestamp = Date.parse(`${date}T00:00:00+08:00`);
+  if (!validString(title, 80) || !Number.isFinite(timestamp) || timestamp <= Date.now()) return p.commit('日期需為未來日期，名稱需為 1–80 字。');
+  const id = `event-${date}-${event.webhookEventId.slice(-8).toLowerCase()}`;
+  p.add(`INSERT INTO activities(id,title,starts_at,location,capacity,status,source,created_event_id)
+    SELECT ?,?,?,?,?,?,?,? WHERE ${p.guard} ON CONFLICT(id) DO NOTHING`, id, title.trim(), new Date(timestamp).toISOString(), '未提供', 10000, 'open', 'LINE 管理員建立', event.webhookEventId, event.webhookEventId);
+  p.add(`INSERT INTO admin_audit(event_id,actor_user_id,action) SELECT ?,?,? WHERE ${p.guard}`, event.webhookEventId, event.source.userId, 'activity_quick_create', event.webhookEventId);
+  return p.commit(`活動已建立：${title.trim()}（${date}）。目前地點為「未提供」、名額為 10000；如需完整地點／名額，請使用 /admin activity JSON。`);
+}
+
 async function buildReply(db, env, event) {
   const eventId = event.webhookEventId;
   const existing = await stmt(db, 'SELECT * FROM webhook_events WHERE event_id=?', eventId).first();
@@ -158,7 +180,8 @@ async function buildReply(db, env, event) {
   const context = user ? JSON.stringify([source.type, source.groupId || source.roomId || user, user]) : null;
   if (text.startsWith('/monitor')) return monitorCommand(db, env, event, text, p);
   if (text.startsWith('/admin')) return adminPlan(db, env, event, text, p);
-  if (['說明','help','幫助'].includes(text)) return p.commit(HELP);
+  if (text === '指令' || text === '說明' || text === 'help' || text === '幫助') return p.commit(COMMAND_HELP);
+  if (/^建立(?:賽事|活動)/.test(text)) return quickActivityPlan(db, env, event, text, p);
   if (text === '取消') {
     if (context) p.add(`DELETE FROM conversations WHERE context_key=? AND ${p.guard}`, context, eventId);
     return p.commit('已結束報名對話；已完成的報名不會被取消。');
@@ -195,14 +218,16 @@ async function buildReply(db, env, event) {
   }
   if (text.startsWith('姓名 ')) {
     if (!session || session.phase !== 'name') return p.commit('報名對話不存在或已逾時，請輸入「我要報名」。');
-    const name = text.slice(3).trim();
-    if (!validString(name, 50)) return p.commit('姓名需為 1–50 字，請重新輸入「姓名 你的姓名」。');
+    const details = text.match(/^姓名\s+(.+?)\s+電話\s+([0-9+()\- ]{6,30})$/);
+    const name = details?.[1]?.trim();
+    const phone = details?.[2]?.replace(/[ ()-]/g, '');
+    if (!validString(name, 50) || !phone || !/^[0-9+]{6,20}$/.test(phone)) return p.commit('格式：姓名 王小明 電話 0912345678');
     // 正取計數與 INSERT 在單一 SQL 內，D1 序列化寫入避免最後一席超賣。
-    p.add(`INSERT INTO registrations(activity_id,user_id,name,status,event_id)
-      SELECT a.id,?,?,CASE WHEN (SELECT COUNT(*) FROM registrations r WHERE r.activity_id=a.id AND r.status='confirmed')<a.capacity THEN 'confirmed' ELSE 'waitlisted' END,?
+    p.add(`INSERT INTO registrations(activity_id,user_id,name,phone,status,event_id)
+      SELECT a.id,?,?,?,CASE WHEN (SELECT COUNT(*) FROM registrations r WHERE r.activity_id=a.id AND r.status='confirmed')<a.capacity THEN 'confirmed' ELSE 'waitlisted' END,?
       FROM activities a WHERE a.id=? AND a.status='open' AND julianday(a.starts_at)>julianday('now')
       AND EXISTS(SELECT 1 FROM conversations WHERE context_key=? AND version=? AND expires_at>unixepoch())
-      AND ${p.guard} ON CONFLICT(activity_id,user_id) DO NOTHING`, user, name, eventId, session.activity_id, context, session.version, eventId);
+      AND ${p.guard} ON CONFLICT(activity_id,user_id) DO NOTHING`, user, name, phone, eventId, session.activity_id, context, session.version, eventId);
     p.add(`DELETE FROM conversations WHERE context_key=? AND version=? AND ${p.guard}`, context, session.version, eventId);
     return p.commit(null, `COALESCE((SELECT a.title || '：' || CASE r.status WHEN 'confirmed' THEN '正取' ELSE '候補' END ||
       CASE WHEN r.event_id=? THEN '，報名完成。' ELSE '，你已報名，未重複新增。' END || char(10) || '來源：D1 活動與報名紀錄'

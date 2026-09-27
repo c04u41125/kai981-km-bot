@@ -49,7 +49,9 @@ async function catalog() {
       const url = new URL(row.url, SOURCE);
       if (url.origin !== 'https://shop.funbox.com.tw' || !url.pathname.startsWith('/products/') || url.username || url.password) throw new Error('SOURCE_FORMAT_CHANGED');
       if (products.has(String(row.id))) throw new Error('SOURCE_PAGINATION_CHANGED');
-      products.set(String(row.id), { id: String(row.id), title: row.title.trim(), url: url.href });
+      const rawPrice = row.price ?? row.variants?.[0]?.price;
+      const price = Number.isFinite(Number(rawPrice)) && Number(rawPrice) >= 0 ? `NT$${Number(rawPrice).toLocaleString('en-US')}` : '未提供';
+      products.set(String(row.id), { id: String(row.id), title: row.title.trim(), url: url.href, price });
     }
     if (rows.length < 18) {
       // 空分類也可能代表來源異常；不將它當成成功的首次基準。
@@ -71,9 +73,9 @@ async function scan(db, owner) {
       FROM monitor_subscriptions WHERE enabled=1 AND ${guard}
       AND EXISTS(SELECT 1 FROM monitor_state WHERE id='funbox' AND initialized=1)
       AND NOT EXISTS(SELECT 1 FROM monitor_products WHERE product_id=?)
-      ON CONFLICT(target_id,product_id) DO NOTHING`, p.id, `Funbox 分類發現新商品\n${p.title}\n${p.url}\n首次發現：${new Date().toISOString()}\n來源：${SOURCE}\n價格、庫存及購買條件請以商品頁為準。`, owner, p.id));
-    queries.push(sql(db, `INSERT INTO monitor_products(product_id,title,url) SELECT ?,?,? WHERE ${guard}
-      ON CONFLICT(product_id) DO UPDATE SET title=excluded.title,url=excluded.url`, p.id, p.title, p.url, owner));
+      ON CONFLICT(target_id,product_id) DO NOTHING`, p.id, `FUNBOX官網監控/${p.title}/${p.price}/${p.url}`, owner, p.id));
+    queries.push(sql(db, `INSERT INTO monitor_products(product_id,title,url,price) SELECT ?,?,?,? WHERE ${guard}
+      ON CONFLICT(product_id) DO UPDATE SET title=excluded.title,url=excluded.url,price=excluded.price`, p.id, p.title, p.url, p.price, owner));
   }
   queries.push(sql(db, `UPDATE monitor_state SET initialized=1,last_success=unixepoch(),last_error=NULL WHERE id='funbox' AND lease_owner=? AND lease_until>unixepoch()`, owner));
   try { await db.batch(queries); }
