@@ -33,9 +33,11 @@ async function catalog() {
   const products = new Map();
   for (let page = 1; page <= 20; page++) {
     const response = await fetch(`https://shop.funbox.com.tw/category_products/XI/KB.json?limit=18&page=${page}&sort_by=sell_from-desc`, {
-      headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000), redirect: 'error'
+      headers: { Accept: 'application/json', 'User-Agent': 'kai981-km-bot-monitor/1.0' }, signal: AbortSignal.timeout(15000)
     }).catch(() => { throw new Error('SOURCE_NETWORK_ERROR'); });
     if (!response.ok) throw new Error('SOURCE_HTTP_ERROR');
+    const finalUrl = new URL(response.url);
+    if (finalUrl.origin !== 'https://shop.funbox.com.tw' || !finalUrl.pathname.startsWith('/category_products/')) throw new Error('SOURCE_REDIRECT');
     if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('SOURCE_FORMAT_CHANGED');
     const raw = await response.text();
     if (raw.length > 2000000) throw new Error('SOURCE_TOO_LARGE');
