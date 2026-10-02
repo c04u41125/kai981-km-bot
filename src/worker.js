@@ -1,5 +1,6 @@
 import { monitorCommand, monitorStatus, scheduledMonitor } from './monitor.js';
 import { scheduledG3, g3Status, g3Weekend } from './g3.js';
+import { marketReply } from './market.js';
 const COMMAND_HELP = String.raw`可用指令：
 1. 建立賽事／活動（管理員）：建立賽事 YYYY-MM-DD 賽事名稱
 2. 報名賽事／活動：我要報名，接著姓名 王小明 電話 0912345678
@@ -7,6 +8,7 @@ const COMMAND_HELP = String.raw`可用指令：
 4. 查詢隊規：隊規
 5. 查詢官網：官網
 6. 查詢指令：指令
+7. 查詢行情：型號行情（例如 UX-01行情）
 G3 官方賽程：本週G3、G3狀態`;
 const UNKNOWN = '目前沒有已確認資料';
 const HELP = COMMAND_HELP;
@@ -181,6 +183,8 @@ async function buildReply(db, env, event) {
   const p = planFor(db, eventId);
   const text = removeBotMention(event);
   if (!text) return p.commit('請在 @Bot 後輸入問題或指令。');
+  const market = await marketReply(text);
+  if (market !== null) return p.commit(market);
   const source = event.source;
   const user = source.userId;
   const context = user ? JSON.stringify([source.type, source.groupId || source.roomId || user, user]) : null;
