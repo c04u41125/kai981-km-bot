@@ -8,7 +8,7 @@ const COMMAND_HELP = String.raw`可用指令：
 4. 查詢隊規：隊規
 5. 查詢官網：官網
 6. 查詢指令：指令
-7. 查詢行情：型號行情（例如 UX-01行情）
+7. 查詢行情：型號或中文名行情（例如 UX-17行情、紅天馬行情）
 G3 官方賽程：本週G3、G3狀態`;
 const UNKNOWN = '目前沒有已確認資料';
 const HELP = COMMAND_HELP;
@@ -341,6 +341,10 @@ export default {
         } else if (url.pathname === '/api/activities') response = json({ activities: await activities(db) });
         else if (url.pathname === '/api/monitor') response = json(await monitorStatus(db));
         else if (url.pathname === '/api/g3') response = json(await g3Status(db));
+        else if (url.pathname === '/api/market') {
+          const q = url.searchParams.get('q') || '';
+          response = validString(q, 120) ? json({ text: await marketReply(q.endsWith('行情') ? q : q + '行情') }) : json({ error: '請輸入 1–120 字關鍵字' }, 400);
+        }
         else response = json({ error: 'Not found' }, 404);
       } else response = json({ error: 'Not found' }, 404);
     } catch (error) {

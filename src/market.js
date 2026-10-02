@@ -1,8 +1,10 @@
+import { searchMarket } from './market-search.js';
 // Read public data only. Never evaluate third-party JavaScript or load paid features.
 const SOURCE = 'https://ddtank98776.github.io/beyblade/';
-const CACHE_KEY = 'https://kai981-km-bot.workers.dev/internal-cache/market-v1';
+const CACHE_KEY = 'https://kai981-km-bot.workers.dev/internal-cache/market-v2';
 const TTL = 30 * 60 * 1000;
 let pending;
+let memory;
 
 function jsonVariable(html, name) {
   const marker = new RegExp('\\bvar\\s+' + name + '\\s*=\\s*').exec(html);
@@ -50,17 +52,18 @@ function fresh(date) {
 }
 
 async function loadSnapshot() {
-  const cached = await caches.default.match(CACHE_KEY);
+  if (memory && Date.now() - memory.fetchedAt < TTL && fresh(memory.date)) return memory;
+  const cached = await caches.default.match(CACHE_KEY).catch(() => null);
   if (cached) {
     const snapshot = await cached.json();
-    if (Date.now() - snapshot.fetchedAt < TTL && fresh(snapshot.date)) return snapshot;
+    if (Date.now() - snapshot.fetchedAt < TTL && fresh(snapshot.date)) return (memory = snapshot);
   }
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
   let html;
   try {
-    const response = await fetch(SOURCE, { signal: controller.signal, redirect: 'error' });
-    if (!response.ok || !response.body) throw new Error('MARKET_FETCH');
+    const response = await fetch(SOURCE, { signal: controller.signal, redirect: 'manual' }).catch(error => { throw new Error('MARKET_NETWORK'); });
+    if (!response.ok || !response.body) throw new Error('MARKET_HTTP_' + response.status);
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let bytes = 0;
@@ -80,11 +83,23 @@ async function loadSnapshot() {
       !/var VN\s*=\s*\['','日版','台版','亞版','美版'/.test(html)) throw new Error('MARKET_SCHEMA');
   const date = html.match(/資料更新：<\/span>\s*(\d{4}-\d{2}-\d{2})/)?.[1];
   if (!date || !fresh(date)) throw new Error('MARKET_STALE');
-  const data = jsonVariable(html, 'D');
-  const catalog = jsonVariable(html, 'CAT');
+  let data, catalog;
+  try { data = jsonVariable(html, 'D'); catalog = jsonVariable(html, 'CAT'); }
+  catch { throw new Error('MARKET_JSON'); }
   if (!Array.isArray(data.m) || !Array.isArray(data.n) || !Array.isArray(data.r) ||
       !catalog.sku || data.m.length > 10000 || data.r.length > 200000) throw new Error('MARKET_SCHEMA');
   const groups = new Map();
+  const rawByModel = new Map();
+  const official = {};
+  for (const [name, models] of Object.entries(catalog.name || {})) {
+    if (Array.isArray(models)) for (const sku of models) (official[sku] ||= []).push(name);
+  }
+  for (const row of data.r) {
+    if (Array.isArray(row) && Number.isInteger(row[0]) && row[0] >= 0 && row[0] < data.m.length) {
+      if (!rawByModel.has(row[0])) rawByModel.set(row[0], []);
+      rawByModel.get(row[0]).push(typeof row[7] === 'string' ? row[7] : '');
+    }
+  }
   for (const r of data.r) {
     if (!Array.isArray(r) || !Number.isInteger(r[0]) || r[0] < 0 || r[0] >= data.m.length ||
         !Number.isFinite(r[1]) || r[1] < 0 || !Number.isFinite(r[2]) || r[2] <= 0 ||
@@ -95,11 +110,12 @@ async function loadSnapshot() {
   const items = data.m.map((key, i) => {
     if (typeof key !== 'string' || key.length > 100) throw new Error('MARKET_SCHEMA');
     const [sku, variant] = key.split('·');
-    const name = variant || catalog.sku[sku]?.[0] || data.n[i]?.[0];
-    return { key, sku, name: typeof name === 'string' ? name.slice(0, 100) : '目前沒有已確認中文名稱', ...summarize(groups.get(i) || []) };
+    const name = variant || (/-00$/.test(sku) ? '未分款（多種混在一起）' : data.n[i]?.[0] || catalog.sku[sku]?.[0]);
+    return { key, sku, aliases: Array.isArray(data.n[i]) ? data.n[i].filter(n => typeof n === 'string') : [], official: /-00$/.test(sku) ? '' : (official[sku] || []).join(' '), raw: rawByModel.get(i) || [], name: typeof name === 'string' ? name.slice(0, 100) : '目前沒有已確認中文名稱', ...summarize(groups.get(i) || []) };
   });
-  const snapshot = { fetchedAt: Date.now(), date, items };
-  await caches.default.put(CACHE_KEY, Response.json(snapshot, { headers: { 'Cache-Control': 'public, max-age=1800' } }));
+  const snapshot = { fetchedAt: Date.now(), date, items, catalog: { typo: catalog.typo || {}, sku: catalog.sku, name: catalog.name || {} } };
+  await caches.default.put(CACHE_KEY, Response.json(snapshot, { headers: { 'Cache-Control': 'public, max-age=1800' } })).catch(() => { console.warn('MARKET_CACHE_WRITE'); });
+  memory = snapshot;
   return snapshot;
 }
 
@@ -107,24 +123,22 @@ export async function marketReply(text) {
   const normalized = text.normalize('NFKC').trim();
   if (!/行情$/.test(normalized)) return null;
   const query = normalized.slice(0, -2).trim().replace(/^[「『"]|[」』"]$/g, '');
-  const match = query.match(/^(BXG|BXH|BXA|BXC|BX|CX|UX)[\s－-]*(\d{1,3})(?:[\s－-]+(\d{1,2}))?(?:[\s·]+(.{1,60}))?$/i);
-  if (!match) return '查行情請輸入：型號行情\n例如：UX-01行情、BX-35-01行情。';
-  const sku = `${match[1].toUpperCase()}-${match[2].padStart(2, '0')}${match[3] ? '-' + match[3].padStart(2, '0') : ''}`;
+  if (!query || query.length > 120) return '請輸入 1–120 字行情關鍵字，例如 UX-17行情、隕星行情、CX00 紅天馬行情。';
   try {
     pending ||= loadSnapshot().finally(() => { pending = null; });
     const snapshot = await pending;
-    let choices = snapshot.items.filter(item => item.sku === sku);
-    if (match[4]) choices = choices.filter(item => item.key.split('·')[1] === match[4] || item.name === match[4]);
-    if (choices.length > 1 || (/-00$/.test(sku) && !match[4])) {
-      const variants = choices.filter(item => item.key.includes('·'));
-      return `${sku} 有多個款式，請補上款名，例如「${variants[0]?.key.replace('·', ' ') || sku + ' 款名'}行情」。\n${variants.slice(0, 12).map(item => item.key.replace('·', ' ')).join('\n')}\n完整款式與來源：${SOURCE}`;
-    }
-    const item = choices[0];
-    if (!item) return `${sku}\n目前沒有已確認資料：查無此型號或款式。\n來源：${SOURCE}`;
-    const price = item.price === null ? '目前沒有已確認資料（無可用成交紀錄）' : `NT$${item.price.toLocaleString('en-US')}`;
-    const basis = item.count ? `\n${item.days ? '近' + item.days + '天' : '全部期間'}成交 ${item.count} 筆${item.count < 5 ? '（樣本較少）' : ''}；整顆、不含美版` : '';
-    return `${item.sku}\n${item.name}\n成交中位數：${price}${basis}\n資料日期：${snapshot.date}\n來源：${SOURCE}`;
-  } catch {
-    return `${sku}\n目前沒有已確認資料：行情來源暫時無法讀取、格式變更或資料已逾 7 天，請稍後再查。\n來源：${SOURCE}`;
+    const { choices, correction, suggestions } = searchMarket(snapshot, query);
+    if (!choices.length) return `${query}\n目前沒有已確認資料：查無符合的行情。${correction ? '\n' + correction : ''}${suggestions.length ? '\n可確認是否為：' + suggestions.join('、') : ''}\n來源：${SOURCE}`;
+    const results = choices.slice(0, 5).map(item => {
+      const price = item.price === null ? '目前沒有已確認資料（無可用成交紀錄）' : `NT$${item.price.toLocaleString('en-US')}`;
+      const basis = item.count ? `\n${item.days ? '近' + item.days + '天' : '全部期間'}成交 ${item.count} 筆${item.count < 5 ? '（樣本較少）' : ''}` : '';
+      return `${item.sku}\n${item.name}\n成交中位數：${price}${basis}`;
+    });
+    return `${correction ? correction + '\n\n' : ''}${results.join('\n\n')}${choices.length > 5 ? `\n\n共 ${choices.length} 款，先列前 5 款；可加上型號／款名縮小範圍。` : ''}\n\n整顆、不含美版；資料日期：${snapshot.date}\n來源：${SOURCE}`;
+  } catch (error) {
+    const code = /^MARKET_[A-Z_0-9]+$/.test(error.message) ? error.message : 'MARKET_RUNTIME';
+    console.error(JSON.stringify({ code }));
+    const reason = code === 'MARKET_STALE' ? '來源資料已逾 7 天或未提供有效日期' : code === 'MARKET_NETWORK' ? '暫時無法連線至行情來源' : code.startsWith('MARKET_HTTP_') ? '行情來源回應異常' : '行情資料暫時無法解析';
+    return `${query}\n目前沒有已確認資料：${reason}，請稍後再查。\n來源：${SOURCE}`;
   }
 }
