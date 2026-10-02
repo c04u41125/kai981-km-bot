@@ -11,7 +11,10 @@ const ownName = item => item.key.includes('·') ? item.key.split('·')[1] : mixe
 const mainName = item => item.key.includes('·') ? item.key.split('·')[1] : mixed(item.key) ? '' : item.aliases[0] || '';
 
 export function searchMarket(snapshot, query) {
-  const { items, catalog } = snapshot;
+  const { catalog } = snapshot;
+  // A post's extracted model number is not a verified catalog entry. Never
+  // silently remap unknown suffixes (e.g. CX-10-02) to another product.
+  const items = snapshot.items.filter(item => Object.hasOwn(catalog.sku, item.sku));
   const countRows = sku => items.filter(item => item.sku === sku || item.sku.startsWith(sku + '-'))
     .reduce((count, item) => count + item.raw.length, 0);
   function clean(word) {
@@ -43,9 +46,11 @@ export function searchMarket(snapshot, query) {
   const prepared = items.map(item => ({ item, model: normalize(item.sku),
     title: (item.key + ' ' + ownName(item)).toUpperCase(),
     main: (item.key + ' ' + mainName(item)).toUpperCase(),
-    hay: (item.key + ' ' + ownName(item) + ' ' + item.official).toUpperCase() }));
+    hay: (item.key + ' ' + ownName(item) + ' ' + item.official + ' ' + (catalog.sku[item.sku]?.[0] || '')).toUpperCase() }));
   function matches(entry, raw, tokens) {
-    const hay = entry.hay + ' ' + raw.toUpperCase();
+    // Search the product identity only. A bundle post can mention many other
+    // products; those mentions must not attach their prices to this product.
+    const hay = entry.hay;
     return tokens.every(token => {
       if (isModel(token)) {
         const key = normalize(token);

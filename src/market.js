@@ -1,7 +1,7 @@
 import { searchMarket } from './market-search.js';
 // Read public data only. Never evaluate third-party JavaScript or load paid features.
 const SOURCE = 'https://ddtank98776.github.io/beyblade/';
-const CACHE_KEY = 'https://kai981-km-bot.workers.dev/internal-cache/market-v2';
+const CACHE_KEY = 'https://kai981-km-bot.workers.dev/internal-cache/market-v3';
 const TTL = 30 * 60 * 1000;
 let pending;
 let memory;
@@ -110,7 +110,12 @@ async function loadSnapshot() {
   const items = data.m.map((key, i) => {
     if (typeof key !== 'string' || key.length > 100) throw new Error('MARKET_SCHEMA');
     const [sku, variant] = key.split('·');
-    const name = variant || (/-00$/.test(sku) ? '未分款（多種混在一起）' : data.n[i]?.[0] || catalog.sku[sku]?.[0]);
+    // Prefer the catalog's Chinese product name, never the first English alias.
+    const chinese = value => typeof value === 'string' && /[\u3400-\u9fff]/.test(value);
+    const catalogName = catalog.sku[sku]?.[0];
+    const name = variant || (/-00$/.test(sku) ? '未分款（多種混在一起）' :
+      chinese(catalogName) ? catalogName :
+      (data.n[i] || []).find(chinese) || (official[sku] || []).find(chinese));
     return { key, sku, aliases: Array.isArray(data.n[i]) ? data.n[i].filter(n => typeof n === 'string') : [], official: /-00$/.test(sku) ? '' : (official[sku] || []).join(' '), raw: rawByModel.get(i) || [], name: typeof name === 'string' ? name.slice(0, 100) : '目前沒有已確認中文名稱', ...summarize(groups.get(i) || []) };
   });
   const snapshot = { fetchedAt: Date.now(), date, items, catalog: { typo: catalog.typo || {}, sku: catalog.sku, name: catalog.name || {} } };
