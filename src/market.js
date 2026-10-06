@@ -6,6 +6,16 @@ const TTL = 30 * 60 * 1000;
 let pending;
 let memory;
 
+function encodingMatches(html, variable, expected) {
+  const declaration = new RegExp('\\b' + variable + '\\s*=\\s*\\[([^\\]]*)\\]').exec(html);
+  if (!declaration) return false;
+  try {
+    // Data labels only: accept either quote style and whitespace, never eval.
+    const labels = JSON.parse('[' + declaration[1].replace(/'([^'\\]*)'/g, (_, value) => JSON.stringify(value)) + ']');
+    return expected.every((label, index) => labels[index] === label);
+  } catch { return false; }
+}
+
 function jsonVariable(html, name) {
   const marker = new RegExp('\\bvar\\s+' + name + '\\s*=\\s*').exec(html);
   if (!marker) throw new Error('MARKET_SCHEMA');
@@ -77,10 +87,11 @@ async function loadSnapshot() {
     }
     html += decoder.decode();
   } finally { clearTimeout(timeout); }
-  // Fail closed if the upstream row status/category encoding changes.
-  if (!/var SN\s*=\s*\['成交','在售','收購','競標'\]/.test(html) ||
-      !/KN\s*=\s*\['整顆','零件','組合','拆賣'\]/.test(html) ||
-      !/var VN\s*=\s*\['','日版','台版','亞版','美版'/.test(html)) throw new Error('MARKET_SCHEMA');
+  // Require known indices to retain their meaning. Newly appended categories
+  // (e.g. 頂重 at index 4) do not invalidate existing rows and remain excluded.
+  if (!encodingMatches(html, 'SN', ['成交','在售','收購','競標']) ||
+      !encodingMatches(html, 'KN', ['整顆','零件','組合','拆賣']) ||
+      !encodingMatches(html, 'VN', ['','日版','台版','亞版','美版'])) throw new Error('MARKET_SCHEMA');
   const date = html.match(/資料更新：<\/span>\s*(\d{4}-\d{2}-\d{2})/)?.[1];
   if (!date || !fresh(date)) throw new Error('MARKET_STALE');
   let data, catalog;
