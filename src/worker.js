@@ -81,7 +81,7 @@ async function knowledge(db, question) {
   const matches = q === '隊規' ? rows.filter(r => r.id.startsWith('rule-')) : rows.filter(r =>
     [r.title, ...JSON.parse(r.aliases_json)].some(alias => normalize(alias) === q));
   if (!matches.length) return { confirmed: false, text: UNKNOWN, sources: [] };
-  return { confirmed: true, text: matches.map(r => `${r.title}\n${r.answer}\n來源：${r.source}`).join('\n\n'), sources: matches.map(r => r.source) };
+  return { confirmed: true, text: matches.map(r => r.id.startsWith('rule-') ? `${r.title}\n${r.answer}` : `${r.title}\n${r.answer}\n來源：${r.source}`).join('\n\n'), sources: matches.map(r => r.source) };
 }
 
 async function activities(db, onlyOpen = false) {
@@ -181,6 +181,7 @@ async function buildReply(db, env, event) {
   const existing = await stmt(db, 'SELECT * FROM webhook_events WHERE event_id=?', eventId).first();
   if (existing) return existing;
   const p = planFor(db, eventId);
+  if (event.type === 'memberJoined') return p.commit(`歡迎加入迴眾 KAI 9.81！\n使用時請先 @迴眾 KM Bot，再輸入指令。\n\n成員可用指令：\n・隊規：查看六條戰隊規章\n・活動：查詢賽事／活動\n・我要報名：依提示選活動，輸入姓名與電話\n・官網：開啟戰隊官網\n・UX-17行情：查詢型號或中文名的成交中位數\n・本週G3：查詢當週末 G3 賽程\n・指令：查看完整指令\n\n一般聊天不會回覆；@all 訊息會忽略。`);
   const text = removeBotMention(event);
   if (!text) return p.commit('請在 @Bot 後輸入問題或指令。');
   const market = await marketReply(text);
@@ -285,6 +286,13 @@ async function deliverReply(db, env, event, row) {
 }
 
 function eligible(event) {
+  if (event?.type === 'memberJoined') {
+    const s = event.source;
+    return event.mode !== 'standby' && validString(event.webhookEventId, 200) && validString(event.replyToken, 200) &&
+      ((s?.type === 'group' && validString(s.groupId, 100)) || (s?.type === 'room' && validString(s.roomId, 100))) &&
+      Array.isArray(event.joined?.members) && event.joined.members.length > 0 &&
+      event.joined.members.every(member => member?.type === 'user' && validString(member.userId, 100));
+  }
   if (event?.type !== 'message' || event.message?.type !== 'text') return false;
   if (!validString(event.message.text, 5000) || !validString(event.webhookEventId, 200) || !validString(event.replyToken, 200)) return false;
   const s = event.source;
