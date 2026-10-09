@@ -1,4 +1,20 @@
-# Funbox 新品群組推播
+# Funbox 新品與 M.M小舖補貨群組推播
+
+## M.M小舖補貨監控（2026-10-09 新增）
+
+來源：https://mmtoyshop.com/category/%F0%9F%8C%80%E6%88%B0%E9%AC%A5%E9%99%80%E8%9E%BA
+
+每分鐘隨既有 Worker Cron 掃描整個分類（所有分頁，最多 20 頁／500 件）。讀取商品卡的實際按鈕文字，只有已記錄「補貨中」的商品改成可點擊「直接購買」或「加入購物車」才通知。首次掃描與首次發現的商品只建立基準；持續有貨不重複通知；再次觀測到補貨中，再恢復有貨時可再次通知。沒有出現在完整分類的商品設為未知，重新出現不推測為補貨。
+
+沿用 monitor_subscriptions，已啟用的群組部署後自動納入。管理員在群組 @Bot 使用 `/monitor on`、`/monitor off` 同時控制兩家商品通知；`/monitor status` 會顯示兩家最近成功時間與來源錯誤。公開 `/api/monitor` 的 `mmtoy` 欄位不含群組或使用者 ID。
+
+訊息格式：`M.M小舖補貨通知/商品名稱/價格/商品連結`，另附狀態變更說明。商品卡可購買不代表每個規格都有貨，也不保證通知送達時仍有庫存。輪詢間短暫補貨、商店快取、LINE 配額與待送量都可能造成漏報或延遲。
+
+全頁成功且商品總數、分頁及唯一 ID 一致才以 D1 batch 提交狀態與通知。HTTP 失敗、未知／矛盾按鈕、空清單與格式變更保留舊狀態並記錄錯誤；不把失敗當成缺貨。每次補貨週期使用獨立去重鍵，沿用 LINE retry key 與 outbox。Funbox 掃描失敗仍會嘗試 M.M小舖；M.M小舖讀取失敗不阻止既有待送訊息。
+
+部署前先套用 `migrations/0008_mm_restock.sql`，再部署含 `src/mm-monitor.js` 的 Worker。無新增 Secret 或公開寫入 API。依使用者要求未執行自動化測試；上線後需確認 mmtoy.initialized、known_products 與 last_success，實際補貨推播仍需等待真實狀態變更驗收。
+
+## Funbox 新品監控
 
 來源：https://shop.funbox.com.tw/categories/XI/KB 。使用該頁自身的公開 JSON 分類介面，每分鐘由 Cloudflare Worker Cron 檢查，不依賴電腦或 Codex 自動化。這是高頻輪詢，不能保證秒級即時；來源快取、排程、網路、LINE 配額及待送量可能延遲通知。
 
