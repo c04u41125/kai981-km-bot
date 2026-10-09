@@ -1,10 +1,11 @@
+import { scanMm, mmStatus } from './mm-monitor.js';
 const SOURCE = 'https://shop.funbox.com.tw/categories/XI/KB';
 const sql = (db, query, ...args) => db.prepare(query).bind(...args);
 
 export async function monitorStatus(db) {
   const state = await db.prepare("SELECT initialized,last_success,last_error FROM monitor_state WHERE id='funbox'").first();
   const count = await db.prepare('SELECT COUNT(*) AS count FROM monitor_products').first();
-  return { source: SOURCE, interval_minutes: 1, ...state, known_products: count.count };
+  return { source: SOURCE, interval_minutes: 1, ...state, known_products: count.count, mmtoy: await mmStatus(db) };
 }
 
 // 此指令僅接受已驗證簽章事件；群組目的地不能由文字指定。
@@ -18,7 +19,7 @@ export async function monitorCommand(db, env, event, text, plan) {
     const sub = await sql(db, 'SELECT enabled FROM monitor_subscriptions WHERE target_id=?', target).first();
     const pending = await sql(db, "SELECT COUNT(*) AS count FROM monitor_outbox WHERE target_id=? AND status='pending'", target).first();
     const failed = await sql(db, "SELECT COUNT(*) AS count FROM monitor_outbox WHERE target_id=? AND status='failed'", target).first();
-    return plan.commit(`Funbox 新品監測\n本群組：${sub?.enabled ? '已訂閱' : '未訂閱'}\n每分鐘檢查，非即時保證。\n已記錄：${state.known_products} 件\n最後成功：${state.last_success ? new Date(state.last_success * 1000).toISOString() : '尚未完成'}\n狀態：${state.last_error || '正常'}\n待送：${pending.count}，失敗：${failed.count}\n來源：${SOURCE}`);
+    return plan.commit(`Funbox 新品／M.M小舖補貨監測\n本群組：${sub?.enabled ? '已訂閱' : '未訂閱'}\n每分鐘檢查，非即時保證。\n已記錄：${state.known_products} 件\n最後成功：${state.last_success ? new Date(state.last_success * 1000).toISOString() : '尚未完成'}\n狀態：${state.last_error || '正常'}\n待送：${pending.count}，失敗：${failed.count}\n來源：${SOURCE}\n\nM.M小舖：${state.mmtoy.known_products} 件\n最後成功：${state.mmtoy.last_success ? new Date(state.mmtoy.last_success * 1000).toISOString() : '尚未完成'}\n狀態：${state.mmtoy.last_error || '正常'}`);
   }
   if (!['/monitor on','/monitor off'].includes(text)) return plan.commit('監測指令：/monitor on、/monitor off、/monitor status。');
   const enabled = text.endsWith(' on') ? 1 : 0;
@@ -26,7 +27,7 @@ export async function monitorCommand(db, env, event, text, plan) {
     ON CONFLICT(target_id) DO UPDATE SET enabled=excluded.enabled,actor_user_id=excluded.actor_user_id,updated_at=unixepoch()`, target, enabled, event.source.userId, event.webhookEventId);
   if (!enabled) plan.add(`UPDATE monitor_outbox SET status='cancelled' WHERE target_id=? AND status='pending' AND ${plan.guard}`, target, event.webhookEventId);
   plan.add(`INSERT INTO admin_audit(event_id,actor_user_id,action) SELECT ?,?,? WHERE ${plan.guard}`, event.webhookEventId, event.source.userId, enabled ? 'monitor_on' : 'monitor_off', event.webhookEventId);
-  return plan.commit(enabled ? '本群組已訂閱 Funbox 新品通知。每分鐘檢查；首次建立基準，不推播既有商品。通知代表分類首次發現，並非保證可購買。' : '本群組已停止新品通知並取消待送訊息；已在傳送中的訊息可能仍會送達。');
+  return plan.commit(enabled ? '本群組已訂閱 Funbox 新品與 M.M小舖補貨通知。M.M小舖僅在補貨中變成可購買時通知。每分鐘檢查；首次建立基準，不推播既有商品。通知代表分類首次發現，並非保證可購買。' : '本群組已停止新品通知並取消待送訊息；已在傳送中的訊息可能仍會送達。');
 }
 
 async function catalog() {
@@ -121,6 +122,7 @@ export async function scheduledMonitor(env) {
       await sql(db, "UPDATE monitor_state SET last_error=? WHERE id='funbox' AND lease_owner=?", code, owner).run();
       console.warn(JSON.stringify({ code }));
     }
+    await scanMm(db, owner);
     await deliver(db, env, owner);
   } finally {
     await sql(db, "UPDATE monitor_state SET lease_until=0 WHERE id='funbox' AND lease_owner=?", owner).run();
