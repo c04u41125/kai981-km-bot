@@ -35,7 +35,7 @@ async function readPage(page) {
     .on(`${selector} [data-bv="product-card-title"]`, { element(e) { if (card) card.url = e.getAttribute('href'); } })
     .on(`${selector} [data-bv="product-price"]`, { text(t) { if (card) card.price += t.text; } })
     .on(`${selector} button`, { element(e) {
-      if (card) card.buttons.push({ text: '', enabled: !e.hasAttribute('disabled') && e.getAttribute('aria-disabled') !== 'true' });
+      if (card) card.buttons.push({ text: '', soldoutMarker: e.getAttribute('data-bv') === 'product-soldout', enabled: !e.hasAttribute('disabled') && e.getAttribute('aria-disabled') !== 'true' });
     }, text(t) { if (card?.buttons.length) card.buttons.at(-1).text += t.text; } })
     .transform(new Response(html)).text();
   if (!products.length) throw new Error('MM_SOURCE_EMPTY');
@@ -45,9 +45,9 @@ async function readPage(page) {
     const buttons = p.buttons.map(b => ({ ...b, text: b.text.trim() }));
     const soldout = buttons.some(b => b.text === '補貨中');
     const buyable = buttons.some(b => b.enabled && ['直接購買', '加入購物車'].includes(b.text));
-    if (soldout === buyable) throw new Error('MM_SOURCE_UNKNOWN_STATUS');
+    if ((soldout && buyable) || (!soldout && !buyable && !buttons.some(b => b.soldoutMarker))) throw new Error('MM_SOURCE_UNKNOWN_STATUS');
     const price = p.price.replace(/\s+/g, '').slice(0, 100);
-    return { id: url.pathname.slice(6), url: url.href, title: p.title.trim(), price: price || '未提供', status: soldout ? 'restocking' : 'available' };
+    return { id: url.pathname.slice(6), url: url.href, title: p.title.trim(), price: price || '未提供', status: soldout ? 'restocking' : buyable ? 'available' : 'unknown' };
   }) };
 }
 
@@ -90,6 +90,6 @@ export async function scanMm(db, owner) {
 
 export async function mmStatus(db) {
   const state = await db.prepare("SELECT initialized,last_success,last_error FROM monitor_state WHERE id='mmtoy'").first();
-  const count = await db.prepare("SELECT COUNT(*) AS count FROM mm_products WHERE status<>'unknown'").first();
-  return { source: MM_SOURCE, interval_minutes: 1, ...state, known_products: count.count };
+  const count = await db.prepare("SELECT COUNT(*) AS count, SUM(CASE WHEN status='unknown' THEN 1 ELSE 0 END) AS unknown_count FROM mm_products").first();
+  return { source: MM_SOURCE, interval_minutes: 1, ...state, known_products: count.count, unknown_products: count.unknown_count || 0 };
 }
