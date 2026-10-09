@@ -10,7 +10,7 @@
 
 訊息格式：`M.M小舖補貨通知/商品名稱/價格/商品連結`，另附狀態變更說明。商品卡可購買不代表每個規格都有貨，也不保證通知送達時仍有庫存。輪詢間短暫補貨、商店快取、LINE 配額與待送量都可能造成漏報或延遲。
 
-全頁成功且商品總數、分頁及唯一 ID 一致才以 D1 batch 提交狀態與通知。HTTP 失敗、未知／矛盾按鈕、空清單與格式變更保留舊狀態並記錄錯誤；不把失敗當成缺貨。每次補貨週期使用獨立去重鍵，沿用 LINE retry key 與 outbox。Funbox 掃描失敗仍會嘗試 M.M小舖；M.M小舖讀取失敗不阻止既有待送訊息。
+全頁成功且商品總數、分頁及唯一 ID 一致才以 D1 batch 提交狀態與通知。HTTP 失敗、無法辨識或矛盾按鈕、空清單與格式變更保留舊狀態並記錄錯誤；不把失敗當成缺貨。每次補貨週期使用獨立去重鍵，沿用 LINE retry key 與 outbox。Funbox 掃描失敗仍會嘗試 M.M小舖；M.M小舖讀取失敗不阻止既有待送訊息。
 
 部署前先套用 `migrations/0008_mm_restock.sql`，再部署含 `src/mm-monitor.js` 的 Worker。無新增 Secret 或公開寫入 API。依使用者要求未執行自動化測試；上線後需確認 mmtoy.initialized、known_products 與 last_success，實際補貨推播仍需等待真實狀態變更驗收。
 
@@ -55,3 +55,5 @@ LINE 開啟 Use webhook、允許群組邀請，並確認 Webhook Verify 成功�
 手動驗收尚未執行：非管理員訂閱應拒絕、群組 on/off、首次無舊品通知、新 ID 只發一次、429 使用相同 retry key 重試、off 取消待送。依使用者要求未執行自動化測試。
 
 參考：[LINE Push API](https://developers.line.biz/en/reference/messaging-api/#send-push-message)、[LINE 重試](https://developers.line.biz/en/docs/messaging-api/retrying-api-request/)、[Cloudflare Cron](https://developers.cloudflare.com/workers/configuration/cron-triggers/)。
+
+商店可能將缺貨按鈕改為自訂文字（例如 CX-17 的「驚不驚喜意不意外」）。這類保留 product-soldout 標記但文字不是「補貨中」的商品記為 unknown，不觸發補貨通知；不影響其他商品。mmtoy.unknown_products 可查看未知狀態筆數。
