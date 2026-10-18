@@ -117,7 +117,7 @@ export async function g3RegionReply(db, text) {
   if (!match) return null;
   const regions = REGION_QUERIES[match[1]];
   if (!regions) return '地區 G3 查詢：高雄G3、嘉義G3、樹林G3、宜蘭G3（本週六日）。嘉義僅限嘉義市，樹林僅限新北市樹林區；其他地區目前沒有已確認資料。';
-  return (await g3Weekend(db, Date.now(), regions)).text;
+  return await g3Weekend(db, Date.now(), regions);
 }
 
 export async function g3Weekend(db, now = Date.now(), regions = REGIONS) {
@@ -128,30 +128,25 @@ export async function g3Weekend(db, now = Date.now(), regions = REGIONS) {
   const header = 'G3 本週末賽事｜' + day(saturday) + '～' + day(sunday) + '\n' + regions.join('／') + '（台灣時間）';
   const links = '\n\n官方賽程來源：\n' + state.sources.map(s => s.name + '：' + s.url).join('\n');
   if (!state.last_success || state.last_error || state.period_start > day(saturday) || state.period_end < day(sunday)) {
-    return { week: day(monday), text: header + '\n目前沒有已確認資料：賽程來源未更新、讀取失敗或尚未完整涵蓋本週末。請核對官方時間表。' + links };
+    return { week: day(monday), available: false, start: day(saturday), end: day(sunday), regions, rows: [], sources: state.sources, text: header + '\n目前沒有已確認資料：賽程來源未更新、讀取失敗或尚未完整涵蓋本週末。請核對官方時間表。' + links };
   }
   const rows = (await sql(db, 'SELECT * FROM g3_events WHERE active=1 AND event_date BETWEEN ? AND ? ORDER BY event_date,event_time,region,venue',day(saturday),day(sunday)).all()).results;
   const blocks = rows.filter(e => regions.includes(e.region)).map(e => e.event_date + ' ' + e.event_time + '｜' + e.region + '\n' + e.venue + '｜' + e.division +
     '\n地址：' + e.address + '\n名額：' + e.capacity + '｜報名：' + e.registration + '\n店家電話：' + e.phone);
-  return { week: day(monday), text: header + '\n\n' + (blocks.length ? blocks.join('\n\n') : '已核對三份官方時間表，目前未列出符合地區的週六、日賽事。') +
+  return { week: day(monday), available: true, start: day(saturday), end: day(sunday), regions, rows: rows.filter(e => regions.includes(e.region)), sources: state.sources, updated: state.last_success, text: header + '\n\n' + (blocks.length ? blocks.join('\n\n') : '已核對三份官方時間表，目前未列出符合地區的週六、日賽事。') +
     '\n\n賽程可能異動；實際報名方式、名額以店家公告為準。此通知不代表已完成報名。' + links };
 }
 
 async function enqueue(db, owner, now) {
   const summary = await g3Weekend(db, now);
-  const chunks = [];
-  let text = '';
-  for (const line of summary.text.split('\n')) {
-    if (text.length + line.length > 4000) { chunks.push(text); text = ''; }
-    text += line + '\n';
-  }
-  if (text) chunks.push(text);
+  const chunks = [summary.text.slice(0, 4700)];
+  const messages = JSON.stringify(g3Messages(summary));
   const targets = (await sql(db, 'SELECT target_id FROM monitor_subscriptions s WHERE enabled=1 AND NOT EXISTS(SELECT 1 FROM g3_outbox o WHERE o.target_id=s.target_id AND o.week_start=?)', summary.week).all()).results;
   for (const target of targets) {
     await db.batch(chunks.map((message, part) => sql(db,
-      'INSERT INTO g3_outbox(target_id,week_start,part,message,retry_key) SELECT ?,?,?,?,? WHERE ' + guard +
+      'INSERT INTO g3_outbox(target_id,week_start,part,message,retry_key,messages_json) SELECT ?,?,?,?,?,? WHERE ' + guard +
       ' ON CONFLICT(target_id,week_start,part) DO NOTHING',
-      target.target_id,summary.week,part,message,crypto.randomUUID(),owner)));
+      target.target_id,summary.week,part,message,crypto.randomUUID(),messages,owner)));
   }
 }
 
@@ -168,7 +163,7 @@ async function deliver(db, env, owner) {
     try {
       const response = await fetch('https://api.line.me/v2/bot/message/push', {
         method:'POST', headers:{Authorization:'Bearer ' + env.LINE_CHANNEL_ACCESS_TOKEN,'Content-Type':'application/json','X-Line-Retry-Key':claim.retry_key},
-        body:JSON.stringify({to:row.target_id,messages:[{type:'text',text:row.message}]}),signal:AbortSignal.timeout(10000)
+        body:JSON.stringify({to:row.target_id,messages:row.messages_json ? JSON.parse(row.messages_json) : [{type:'text',text:row.message}]}),signal:AbortSignal.timeout(10000)
       });
       const accepted = response.ok || (response.status === 409 && !!response.headers.get('x-line-accepted-request-id'));
       await sql(db,'UPDATE g3_outbox SET status=?,last_http_status=? WHERE id=?', accepted?'sent':[400,404].includes(response.status)?'failed':'pending',response.status,row.id).run();
@@ -201,3 +196,19 @@ export async function scheduledG3(env, now = Date.now()) {
   }
 }
 
+
+const G3_PAGE = 'https://kai981-km-bot.kai981-km-bot.workers.dev/g3';
+const txt = (text, size = 'sm', color = '#171918') => ({type:'text',text:String(text),size,color,wrap:true});
+export function g3Messages(summary) {
+  if (!summary.available) return [{type:'text',text:summary.text.slice(0,4700)}];
+  const groups = [
+    {name:'嘉義市', regions:['嘉義市']}, {name:'樹林區', regions:['新北市樹林區']},
+    {name:'宜蘭縣', regions:['宜蘭縣']}, {name:'高雄', regions:['高雄市','高雄縣']}
+  ].filter(g => g.regions.some(r => summary.regions.includes(r)));
+  const bubbles = groups.map(g => {
+    const rows = summary.rows.filter(r => g.regions.includes(r.region));
+    const uri = G3_PAGE + '?region=' + encodeURIComponent(g.name) + '&week=' + summary.week;
+    return {type:'bubble',size:'mega',header:{type:'box',layout:'vertical',backgroundColor:'#171918',spacing:'sm',contents:[txt('迴眾 KAI 9.81 / G3','xs','#D9FF62'),{...txt(g.name + ' · 本週末','xl','#FFFFFF'),weight:'bold'},txt(summary.start + ' — ' + summary.end,'xs','#FFFFFF')]},body:{type:'box',layout:'vertical',spacing:'lg',backgroundColor:'#F0EFE9',contents:[{...txt(rows.length + ' 場官方賽事','xl'),weight:'bold'},txt('星期六 '+rows.filter(r=>r.event_date===summary.start).length+' 場  /  星期日 '+rows.filter(r=>r.event_date===summary.end).length+' 場'),{type:'separator'},...rows.slice(0,3).map(r=>txt(r.event_date.slice(5)+' '+r.event_time+'｜'+r.venue+' · '+r.division)),txt(rows.length>3?'另有 '+(rows.length-3)+' 場，點下方看完整賽程。':rows.length?'報名方式與名額以店家公告為準。':'已核對來源，本週末未列出此地區場次。','xs','#62665C')]},footer:{type:'box',layout:'vertical',contents:[{type:'button',style:'primary',color:'#344421',action:{type:'uri',label:'查看完整賽程 ↗',uri}}]}};
+  });
+  return [{type:'flex',altText:'迴眾 G3｜'+summary.start+'～'+summary.end+'｜'+summary.rows.length+' 場，點開查看地區卡片',contents:bubbles.length===1?bubbles[0]:{type:'carousel',contents:bubbles}}];
+}

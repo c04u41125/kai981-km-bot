@@ -1,5 +1,6 @@
+import { G3_HTML } from './g3-page.js';
 import { monitorCommand, monitorStatus, scheduledMonitor } from './monitor.js';
-import { scheduledG3, g3Status, g3Weekend, g3RegionReply } from './g3.js';
+import { scheduledG3, g3Status, g3Weekend, g3RegionReply, g3Messages } from './g3.js';
 import { marketReply } from './market.js';
 const COMMAND_HELP = String.raw`可用指令：
 1. 查詢隊規：隊規
@@ -101,11 +102,11 @@ function planFor(db, eventId) {
   return {
     guard,
     add(sql, ...args) { statements.push(stmt(db, sql, ...args)); },
-    async commit(text, responseSql, responseArgs = []) {
+    async commit(text, responseSql, responseArgs = [], messages = null) {
       const expression = responseSql || '?';
       const args = responseSql ? responseArgs : [text];
-      statements.push(stmt(db, `INSERT INTO webhook_events(event_id,reply_text)
-        SELECT ?,${expression} WHERE ${guard}`, eventId, ...args, eventId));
+      statements.push(stmt(db, `INSERT INTO webhook_events(event_id,reply_text,messages_json)
+        SELECT ?,${expression},? WHERE ${guard}`, eventId, ...args, messages ? JSON.stringify(messages) : null, eventId));
       statements.push(stmt(db, 'SELECT * FROM webhook_events WHERE event_id=?', eventId));
       const results = await db.batch(statements);
       return results.at(-1).results[0];
@@ -166,13 +167,13 @@ async function buildReply(db, env, event) {
   const source = event.source;
   const user = source.userId;
   const context = user ? JSON.stringify([source.type, source.groupId || source.roomId || user, user]) : null;
-  if (['本週G3','本週g3','G3','g3'].includes(text)) return p.commit((await g3Weekend(db)).text);
+  if (['本週G3','本週g3','G3','g3'].includes(text)) { const summary = await g3Weekend(db); return p.commit(summary.text, null, [], g3Messages(summary)); }
   if (['G3狀態','g3狀態'].includes(text)) {
     const s = await g3Status(db);
     return p.commit(`G3 賽程：${s.period_start || '未讀取'}～${s.period_end || '未讀取'}\n已記錄 ${s.events} 場\n最後更新：${s.last_success ? new Date(s.last_success * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '尚未完成'}\n來源狀態：${s.last_error || '正常'}\n每週一台灣時間 09:00 推播至已啟用 /monitor on 的群組。`);
   }
   const regionalG3 = await g3RegionReply(db, text);
-  if (regionalG3 !== null) return p.commit(regionalG3);
+  if (regionalG3 !== null) return typeof regionalG3 === 'string' ? p.commit(regionalG3) : p.commit(regionalG3.text, null, [], g3Messages(regionalG3));
   if (text.startsWith('/monitor')) return monitorCommand(db, env, event, text, p);
   if (text.startsWith('/admin')) return adminPlan(db, env, event, text, p);
   if (text === '指令' || text === '說明' || text === 'help' || text === '幫助') return p.commit(COMMAND_HELP);
@@ -207,7 +208,7 @@ async function deliverReply(db, env, event, row) {
   try {
     response = await fetch('https://api.line.me/v2/bot/message/reply', {
       method: 'POST', headers: { Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ replyToken: event.replyToken, messages: replyMessages(row.reply_text) }),
+      body: JSON.stringify({ replyToken: event.replyToken, messages: row.messages_json ? JSON.parse(row.messages_json) : replyMessages(row.reply_text) }),
       signal: AbortSignal.timeout(10000)
     });
   } catch {
@@ -275,7 +276,9 @@ export default {
     try {
       // 從 primary 開始讀取，避免已開啟 D1 read replication 時讀到舊狀態。
       const db = env.DB.withSession('first-primary');
-      if (url.pathname === '/webhook') {
+      if (url.pathname === '/g3') {
+        response = request.method === 'GET' ? new Response(G3_HTML, {headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"}}) : json({error:'Method not allowed'},405);
+      } else if (url.pathname === '/webhook') {
         response = request.method === 'POST' ? await webhook(request, env, db) : json({ error: 'Method not allowed' }, 405);
       } else if (url.pathname.startsWith('/api/')) {
         if (request.method !== 'GET') response = json({ error: 'Read-only API' }, 405);
@@ -284,6 +287,15 @@ export default {
           response = validString(q, 200) ? json(await knowledge(db, q)) : json({ error: '請輸入 1–200 字問題' }, 400);
         } else if (url.pathname === '/api/activities') response = json({ activities: await activities(db) });
         else if (url.pathname === '/api/monitor') response = json(await monitorStatus(db));
+        else if (url.pathname === '/api/g3/weekend') {
+          const week = url.searchParams.get('week');
+          let now = Date.now();
+          if (week) {
+            now = Date.parse(week + 'T12:00:00+08:00');
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(week) || !Number.isFinite(now) || new Date(now + 8*3600000).toISOString().slice(0,10) !== week || new Date(now + 8*3600000).getUTCDay() !== 1) return json({error:'Invalid week'},400);
+          }
+          response = json(await g3Weekend(db, now));
+        }
         else if (url.pathname === '/api/g3') response = json(await g3Status(db));
         else if (url.pathname === '/api/market') {
           const q = url.searchParams.get('q') || '';
