@@ -2,12 +2,10 @@ import { monitorCommand, monitorStatus, scheduledMonitor } from './monitor.js';
 import { scheduledG3, g3Status, g3Weekend } from './g3.js';
 import { marketReply } from './market.js';
 const COMMAND_HELP = String.raw`可用指令：
-1. 報名賽事／活動：我要報名，接著姓名 王小明 電話 0912345678
-2. 查詢賽事／活動：活動 或 查詢活動
-3. 查詢隊規：隊規
-4. 查詢官網：官網
-5. 查詢指令：指令
-6. 查詢行情：型號或中文名行情（例如 UX-17行情、紅天馬行情）
+1. 查詢隊規：隊規
+2. 查詢官網：官網
+3. 查詢指令：指令
+4. 查詢行情：型號或中文名行情（例如 UX-17行情、紅天馬行情）
 G3 官方賽程：本週G3、G3狀態`;
 const UNKNOWN = '目前沒有已確認資料';
 const HELP = COMMAND_HELP;
@@ -159,7 +157,7 @@ async function buildReply(db, env, event) {
   const existing = await stmt(db, 'SELECT * FROM webhook_events WHERE event_id=?', eventId).first();
   if (existing) return existing;
   const p = planFor(db, eventId);
-  if (event.type === 'memberJoined') return p.commit(`歡迎加入迴眾 KAI 9.81！\n使用時請先 @迴眾 KM Bot，再輸入指令。\n\n成員可用指令：\n・隊規：查看六條戰隊規章\n・活動：查詢賽事／活動\n・我要報名：依提示選活動，輸入姓名與電話\n・官網：開啟戰隊官網\n・UX-17行情：查詢型號或中文名的成交中位數\n・本週G3：查詢當週末 G3 賽程\n・指令：查看完整指令\n\n一般聊天不會回覆；@all 訊息會忽略。`);
+  if (event.type === 'memberJoined') return p.commit(`歡迎加入迴眾 KAI 9.81！\n使用時請先 @迴眾 KM Bot，再輸入指令。\n\n成員可用指令：\n・隊規：查看六條戰隊規章\n・官網：開啟戰隊官網\n・UX-17行情：查詢型號或中文名的成交中位數\n・本週G3：查詢當週末 G3 賽程\n・指令：查看完整指令\n\n一般聊天不會回覆；@all 訊息會忽略。`);
   const text = removeBotMention(event);
   if (!text) return p.commit('請在 @Bot 後輸入問題或指令。');
   const market = await marketReply(text);
@@ -180,53 +178,10 @@ async function buildReply(db, env, event) {
     if (context) p.add(`DELETE FROM conversations WHERE context_key=? AND ${p.guard}`, context, eventId);
     return p.commit('已結束報名對話；已完成的報名不會被取消。');
   }
-  if (text === '活動' || text === '查詢活動') {
-    const rows = await activities(db);
-    return p.commit(rows.length ? rows.map(activityText).join('\n\n') : `${UNKNOWN}：尚未建立活動。`);
-  }
-  if (text === '我的報名') {
-    if (!user) return p.commit('無法取得 LINE 使用者識別，請改用 Bot 私訊查詢。');
-    const rows = (await stmt(db, `SELECT a.title,r.status FROM registrations r JOIN activities a ON a.id=r.activity_id WHERE r.user_id=? ORDER BY r.id DESC LIMIT 30`, user).all()).results;
-    return p.commit(rows.length ? rows.map(r => `${r.title}：${r.status === 'confirmed' ? '正取' : '候補'}`).join('\n') : '目前沒有你的報名紀錄。');
-  }
-  if (text === '我要報名') {
-    if (!user) return p.commit('無法取得 LINE 使用者識別，請改用 Bot 私訊報名。');
-    const rows = await activities(db, true);
-    if (!rows.length) return p.commit(`${UNKNOWN}：目前沒有可報名的活動。`);
-    if (rows.length === 1) {
-      setSession(p, eventId, context, 'name', rows[0].id);
-      return p.commit(`${activityText(rows[0])}\n\n請在 15 分鐘內輸入「姓名 王小明 電話 0912345678」。${source.type !== 'user' ? '\n注意：群組內的姓名與電話會被群組成員看到，也可以改用私訊重新輸入「我要報名」。' : ''}`);
-    }
-    setSession(p, eventId, context, 'choose', null, rows.map(r => r.id));
-    return p.commit(`請在 15 分鐘內輸入「選擇 活動ID」：\n\n${rows.map(activityText).join('\n\n')}`);
-  }
-  const session = context ? await stmt(db, 'SELECT * FROM conversations WHERE context_key=? AND expires_at>unixepoch()', context).first() : null;
-  if (text.startsWith('選擇 ')) {
-    const id = text.slice(3).trim();
-    if (!session || session.phase !== 'choose') return p.commit('請先輸入「我要報名」。');
-    if (!JSON.parse(session.choices_json).includes(id)) return p.commit('請輸入清單內的活動 ID，例如「選擇 training-01」。');
-    const row = (await activities(db, true)).find(r => r.id === id);
-    if (!row) return p.commit('該活動目前無法報名，請重新輸入「我要報名」。');
-    setSession(p, eventId, context, 'name', id);
-    return p.commit(`已選擇 ${row.title}。請輸入「姓名 王小明 電話 0912345678」。群組內的姓名與電話會被群組成員看到。`);
-  }
-  if (text.startsWith('姓名 ')) {
-    if (!session || session.phase !== 'name') return p.commit('報名對話不存在或已逾時，請輸入「我要報名」。');
-    const details = text.match(/^姓名\s+(.+?)\s+電話\s+([0-9+()\- ]{6,30})$/);
-    const name = details?.[1]?.trim();
-    const phone = details?.[2]?.replace(/[ ()-]/g, '');
-    if (!validString(name, 50) || !phone || !/^[0-9+]{6,20}$/.test(phone)) return p.commit('格式：姓名 王小明 電話 0912345678');
-    // 正取計數與 INSERT 在單一 SQL 內，D1 序列化寫入避免最後一席超賣。
-    p.add(`INSERT INTO registrations(activity_id,user_id,name,phone,status,event_id)
-      SELECT a.id,?,?,?,CASE WHEN (SELECT COUNT(*) FROM registrations r WHERE r.activity_id=a.id AND r.status='confirmed')<a.capacity THEN 'confirmed' ELSE 'waitlisted' END,?
-      FROM activities a WHERE a.id=? AND a.status='open' AND julianday(a.starts_at)>julianday('now')
-      AND EXISTS(SELECT 1 FROM conversations WHERE context_key=? AND version=? AND expires_at>unixepoch())
-      AND ${p.guard} ON CONFLICT(activity_id,user_id) DO NOTHING`, user, name, phone, eventId, session.activity_id, context, session.version, eventId);
-    p.add(`DELETE FROM conversations WHERE context_key=? AND version=? AND ${p.guard}`, context, session.version, eventId);
-    return p.commit(null, `COALESCE((SELECT a.title || '：' || CASE r.status WHEN 'confirmed' THEN '正取' ELSE '候補' END ||
-      CASE WHEN r.event_id=? THEN '，報名完成。' ELSE '，你已報名，未重複新增。' END || char(10) || '來源：D1 活動與報名紀錄'
-      FROM registrations r JOIN activities a ON a.id=r.activity_id WHERE r.activity_id=? AND r.user_id=?),
-      '未完成報名：活動已關閉、已開始或對話已更新。請重新輸入「我要報名」。')`, [eventId, session.activity_id, user]);
+  // 暫停活動查詢與完整報名流程，包含舊對話的後續姓名／選擇輸入。
+  if (/^(?:(?:我要|我的)?報名|(?:查詢)?(?:賽事|活動)|選擇(?:\s|$)|姓名(?:\s|$))/.test(text)) {
+    if (context) p.add(`DELETE FROM conversations WHERE context_key=? AND ${p.guard}`, context, eventId);
+    return p.commit(`賽事／活動報名與查詢功能暫時停用。\n\n${COMMAND_HELP}`);
   }
   const answer = await knowledge(db, text);
   if (!answer.confirmed) {
@@ -234,7 +189,7 @@ async function buildReply(db, env, event) {
       return p.commit(`目前沒有已確認資料。\n\n${HELP}`);
     }
     p.add(`INSERT INTO pending_questions(event_id,question,source_type) SELECT ?,?,? WHERE ${p.guard}`, eventId, text, source.type, eventId);
-      return p.commit(`${UNKNOWN}，此問題已記入待補問題清單。\n\n${COMMAND_HELP}${session ? '\n報名中請使用「選擇 活動ID」或「姓名 王小明 電話 0912345678」。' : ''}`);
+      return p.commit(`${UNKNOWN}，此問題已記入待補問題清單。\n\n${COMMAND_HELP}`);
   }
   return p.commit(answer.text);
 }
