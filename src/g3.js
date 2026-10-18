@@ -104,18 +104,34 @@ export async function g3Status(db) {
     weekly_push: '星期一 09:00', sources: G3_SOURCES.map(s => ({ name: s.name, url: sourceURL(s) })) };
 }
 
-export async function g3Weekend(db, now = Date.now()) {
+const REGION_QUERIES = {
+  '高雄': ['高雄市', '高雄縣'], '高雄市': ['高雄市'], '高雄縣': ['高雄縣'],
+  '嘉義': ['嘉義市'], '嘉義市': ['嘉義市'],
+  '樹林': ['新北市樹林區'], '樹林區': ['新北市樹林區'], '新北市樹林區': ['新北市樹林區'],
+  '宜蘭': ['宜蘭縣'], '宜蘭縣': ['宜蘭縣']
+};
+
+export async function g3RegionReply(db, text) {
+  const command = text.normalize('NFKC').replace(/\s/g, '');
+  const match = command.match(/^(?:本週)?(.+?)G3$/i) || command.match(/^G3(.+)$/i);
+  if (!match) return null;
+  const regions = REGION_QUERIES[match[1]];
+  if (!regions) return '地區 G3 查詢：高雄G3、嘉義G3、樹林G3、宜蘭G3（本週六日）。嘉義僅限嘉義市，樹林僅限新北市樹林區；其他地區目前沒有已確認資料。';
+  return (await g3Weekend(db, Date.now(), regions)).text;
+}
+
+export async function g3Weekend(db, now = Date.now(), regions = REGIONS) {
   const today = local(now);
   const monday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - (today.getUTCDay() + 6) % 7));
   const saturday = new Date(monday.getTime() + 5 * 86400000), sunday = new Date(monday.getTime() + 6 * 86400000);
   const state = await g3Status(db);
-  const header = 'G3 本週末賽事｜' + day(saturday) + '～' + day(sunday) + '\n嘉義市／新北市樹林區／宜蘭縣／高雄（台灣時間）';
+  const header = 'G3 本週末賽事｜' + day(saturday) + '～' + day(sunday) + '\n' + regions.join('／') + '（台灣時間）';
   const links = '\n\n官方賽程來源：\n' + state.sources.map(s => s.name + '：' + s.url).join('\n');
   if (!state.last_success || state.last_error || state.period_start > day(saturday) || state.period_end < day(sunday)) {
     return { week: day(monday), text: header + '\n目前沒有已確認資料：賽程來源未更新、讀取失敗或尚未完整涵蓋本週末。請核對官方時間表。' + links };
   }
   const rows = (await sql(db, 'SELECT * FROM g3_events WHERE active=1 AND event_date BETWEEN ? AND ? ORDER BY event_date,event_time,region,venue',day(saturday),day(sunday)).all()).results;
-  const blocks = rows.map(e => e.event_date + ' ' + e.event_time + '｜' + e.region + '\n' + e.venue + '｜' + e.division +
+  const blocks = rows.filter(e => regions.includes(e.region)).map(e => e.event_date + ' ' + e.event_time + '｜' + e.region + '\n' + e.venue + '｜' + e.division +
     '\n地址：' + e.address + '\n名額：' + e.capacity + '｜報名：' + e.registration + '\n店家電話：' + e.phone);
   return { week: day(monday), text: header + '\n\n' + (blocks.length ? blocks.join('\n\n') : '已核對三份官方時間表，目前未列出符合地區的週六、日賽事。') +
     '\n\n賽程可能異動；實際報名方式、名額以店家公告為準。此通知不代表已完成報名。' + links };

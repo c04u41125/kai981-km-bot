@@ -1,12 +1,13 @@
 import { monitorCommand, monitorStatus, scheduledMonitor } from './monitor.js';
-import { scheduledG3, g3Status, g3Weekend } from './g3.js';
+import { scheduledG3, g3Status, g3Weekend, g3RegionReply } from './g3.js';
 import { marketReply } from './market.js';
 const COMMAND_HELP = String.raw`可用指令：
 1. 查詢隊規：隊規
 2. 查詢官網：官網
 3. 查詢指令：指令
 4. 查詢行情：型號或中文名行情（例如 UX-17行情、紅天馬行情）
-G3 官方賽程：本週G3、G3狀態`;
+G3 官方賽程：本週G3、G3狀態
+地區 G3（本週六日）：高雄G3、嘉義G3、樹林G3、宜蘭G3`;
 const UNKNOWN = '目前沒有已確認資料';
 const HELP = COMMAND_HELP;
 const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[\s？?。！!]/g, '');
@@ -157,7 +158,7 @@ async function buildReply(db, env, event) {
   const existing = await stmt(db, 'SELECT * FROM webhook_events WHERE event_id=?', eventId).first();
   if (existing) return existing;
   const p = planFor(db, eventId);
-  if (event.type === 'memberJoined') return p.commit(`歡迎加入迴眾 KAI 9.81！\n使用時請先 @迴眾 KM Bot，再輸入指令。\n\n成員可用指令：\n・隊規：查看六條戰隊規章\n・官網：開啟戰隊官網\n・UX-17行情：查詢型號或中文名的成交中位數\n・本週G3：查詢當週末 G3 賽程\n・指令：查看完整指令\n\n一般聊天不會回覆；@all 訊息會忽略。`);
+  if (event.type === 'memberJoined') return p.commit(`歡迎加入迴眾 KAI 9.81！\n使用時請先 @迴眾 KM Bot，再輸入指令。\n\n成員可用指令：\n・隊規：查看六條戰隊規章\n・官網：開啟戰隊官網\n・UX-17行情：查詢型號或中文名的成交中位數\n・本週G3：查詢當週末 G3 賽程\n・高雄G3／嘉義G3／樹林G3／宜蘭G3：查詢地區週末賽程\n・指令：查看完整指令\n\n一般聊天不會回覆；@all 訊息會忽略。`);
   const text = removeBotMention(event);
   if (!text) return p.commit('請在 @Bot 後輸入問題或指令。');
   const market = await marketReply(text);
@@ -170,6 +171,8 @@ async function buildReply(db, env, event) {
     const s = await g3Status(db);
     return p.commit(`G3 賽程：${s.period_start || '未讀取'}～${s.period_end || '未讀取'}\n已記錄 ${s.events} 場\n最後更新：${s.last_success ? new Date(s.last_success * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '尚未完成'}\n來源狀態：${s.last_error || '正常'}\n每週一台灣時間 09:00 推播至已啟用 /monitor on 的群組。`);
   }
+  const regionalG3 = await g3RegionReply(db, text);
+  if (regionalG3 !== null) return p.commit(regionalG3);
   if (text.startsWith('/monitor')) return monitorCommand(db, env, event, text, p);
   if (text.startsWith('/admin')) return adminPlan(db, env, event, text, p);
   if (text === '指令' || text === '說明' || text === 'help' || text === '幫助') return p.commit(COMMAND_HELP);
