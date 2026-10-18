@@ -4,7 +4,7 @@ export const G3_SOURCES = [
   { id: '1MSSZJZKCqDWmPcfIuI4iNLNXU0nyD2VIAU0gr0iBzv8', name: 'B4合作據點' },
   { id: '1Y3jb2TJx8HHCBEHhXM8ugX3IUpSDD_hY-BZ6f3HVloo', name: '夾子園' }
 ];
-const REGIONS = ['嘉義市', '新北市樹林區', '宜蘭縣'];
+const REGIONS = ['嘉義市', '新北市樹林區', '宜蘭縣', '高雄市', '高雄縣'];
 const sql = (db, query, ...values) => db.prepare(query).bind(...values);
 const local = now => new Date(now + 8 * 3600000);
 const day = date => date.toISOString().slice(0, 10);
@@ -109,7 +109,7 @@ export async function g3Weekend(db, now = Date.now()) {
   const monday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - (today.getUTCDay() + 6) % 7));
   const saturday = new Date(monday.getTime() + 5 * 86400000), sunday = new Date(monday.getTime() + 6 * 86400000);
   const state = await g3Status(db);
-  const header = 'G3 本週末賽事｜' + day(saturday) + '～' + day(sunday) + '\n嘉義市／新北市樹林區／宜蘭縣（台灣時間）';
+  const header = 'G3 本週末賽事｜' + day(saturday) + '～' + day(sunday) + '\n嘉義市／新北市樹林區／宜蘭縣／高雄（台灣時間）';
   const links = '\n\n官方賽程來源：\n' + state.sources.map(s => s.name + '：' + s.url).join('\n');
   if (!state.last_success || state.last_error || state.period_start > day(saturday) || state.period_end < day(sunday)) {
     return { week: day(monday), text: header + '\n目前沒有已確認資料：賽程來源未更新、讀取失敗或尚未完整涵蓋本週末。請核對官方時間表。' + links };

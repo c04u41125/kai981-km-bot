@@ -2,13 +2,12 @@ import { monitorCommand, monitorStatus, scheduledMonitor } from './monitor.js';
 import { scheduledG3, g3Status, g3Weekend } from './g3.js';
 import { marketReply } from './market.js';
 const COMMAND_HELP = String.raw`可用指令：
-1. 建立賽事／活動（管理員）：建立賽事 YYYY-MM-DD 賽事名稱
-2. 報名賽事／活動：我要報名，接著姓名 王小明 電話 0912345678
-3. 查詢賽事／活動：活動 或 查詢活動
-4. 查詢隊規：隊規
-5. 查詢官網：官網
-6. 查詢指令：指令
-7. 查詢行情：型號或中文名行情（例如 UX-17行情、紅天馬行情）
+1. 報名賽事／活動：我要報名，接著姓名 王小明 電話 0912345678
+2. 查詢賽事／活動：活動 或 查詢活動
+3. 查詢隊規：隊規
+4. 查詢官網：官網
+5. 查詢指令：指令
+6. 查詢行情：型號或中文名行情（例如 UX-17行情、紅天馬行情）
 G3 官方賽程：本週G3、G3狀態`;
 const UNKNOWN = '目前沒有已確認資料';
 const HELP = COMMAND_HELP;
@@ -124,6 +123,7 @@ function setSession(p, eventId, context, phase, activityId, choices = []) {
 }
 
 async function adminPlan(db, env, event, text, p) {
+  if (/^\/admin activity(?:\s|$)/.test(text)) return p.commit('新增賽事／活動功能已停用。');
   const user = event.source.userId;
   const admins = (env.ADMIN_LINE_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
   if (!['user','group','room'].includes(event.source.type) || !user || !admins.includes(user)) return p.commit('管理操作已拒絕：需要管理員白名單。');
@@ -131,11 +131,11 @@ async function adminPlan(db, env, event, text, p) {
     const rows = (await db.prepare("SELECT id,question FROM pending_questions WHERE status='pending' ORDER BY id DESC LIMIT 10").all()).results;
     return p.commit(rows.length ? rows.map(r => `#${r.id} ${r.question.slice(0, 300)}`).join('\n') : '目前沒有待補問題。');
   }
-  const match = text.match(/^\/admin (knowledge|activity|close|delete|resolve)\s+([\s\S]+)$/);
-  if (!match) return p.commit('管理指令：/admin pending、/admin knowledge {JSON}、/admin activity {JSON}、/admin close 活動ID（或 delete）、/admin resolve 問題ID。格式請見 README。');
+  const match = text.match(/^\/admin (knowledge|close|delete|resolve)\s+([\s\S]+)$/);
+  if (!match) return p.commit('管理指令：/admin pending、/admin knowledge {JSON}、/admin close 活動ID（或 delete）、/admin resolve 問題ID。新增賽事／活動已停用。');
   const [, action, payload] = match;
   let data;
-  try { if (action === 'knowledge' || action === 'activity') data = JSON.parse(payload); }
+  try { if (action === 'knowledge') data = JSON.parse(payload); }
   catch { return p.commit('JSON 格式錯誤，未修改任何資料。'); }
   if (action === 'knowledge') {
     if (!data || !validString(data.id, 40) || !keyPattern.test(data.id) || !validString(data.title, 80) || !validString(data.answer, 1200) || !validString(data.source, 200) || !Array.isArray(data.aliases) || data.aliases.length < 1 || data.aliases.length > 30 || data.aliases.some(s => !validString(s, 80))) return p.commit('知識欄位不合法：需要 id、title、answer、source、aliases（1–30 個別名）。');
@@ -143,12 +143,6 @@ async function adminPlan(db, env, event, text, p) {
       ON CONFLICT(id) DO UPDATE SET title=excluded.title,answer=excluded.answer,source=excluded.source,
       aliases_json=excluded.aliases_json,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
     data.id, data.title.trim(), data.answer.trim(), data.source.trim(), JSON.stringify(data.aliases), event.webhookEventId);
-  } else if (action === 'activity') {
-    if (!data || !validString(data.id, 40) || !keyPattern.test(data.id) || !validString(data.title, 80) || !validString(data.location, 200) || !validString(data.source, 200) || !Number.isInteger(data.capacity) || data.capacity < 1 || data.capacity > 10000 || !['open','closed'].includes(data.status) || !validString(data.starts_at, 40) || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(Z|[+-]\d{2}:\d{2})$/.test(data.starts_at) || !Number.isFinite(Date.parse(data.starts_at)) || Date.parse(data.starts_at) <= Date.now()) return p.commit('活動欄位不合法：需未來且含時區的 starts_at、id、title、location、capacity（1–10000）、status（open/closed）、source。');
-    if (await stmt(db, 'SELECT id FROM activities WHERE id=?', data.id).first()) return p.commit('活動 ID 已存在。第一階段只允許新增與關閉活動；時間、名額異動請由資料庫維護者另行處理。');
-    p.add(`INSERT INTO activities(id,title,starts_at,location,capacity,status,source,created_event_id)
-      SELECT ?,?,?,?,?,?,?,? WHERE ${p.guard} ON CONFLICT(id) DO NOTHING`,
-    data.id, data.title.trim(), new Date(data.starts_at).toISOString(), data.location.trim(), data.capacity, data.status, data.source.trim(), event.webhookEventId, event.webhookEventId);
   } else if (action === 'close' || action === 'delete') {
     if (!keyPattern.test(payload) || !await stmt(db, 'SELECT id FROM activities WHERE id=?', payload).first()) return p.commit('找不到該活動，未修改資料。');
     p.add(`UPDATE activities SET status='closed' WHERE id=? AND ${p.guard}`, payload, event.webhookEventId);
@@ -157,23 +151,7 @@ async function adminPlan(db, env, event, text, p) {
     p.add(`UPDATE pending_questions SET status='resolved' WHERE id=? AND ${p.guard}`, Number(payload), event.webhookEventId);
   }
   p.add(`INSERT INTO admin_audit(event_id,actor_user_id,action) SELECT ?,?,? WHERE ${p.guard}`, event.webhookEventId, user, action, event.webhookEventId);
-  if (action === 'activity') return p.commit(null, `(SELECT CASE WHEN created_event_id=? THEN '活動已建立。' ELSE '活動 ID 已存在，未覆寫資料。' END FROM activities WHERE id=?)`, [event.webhookEventId, data.id]);
   return p.commit('管理操作完成。');
-}
-
-async function quickActivityPlan(db, env, event, text, p) {
-  const admins = (env.ADMIN_LINE_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-  if (!admins.includes(event.source.userId)) return p.commit('建立活動已拒絕：需要管理員白名單。');
-  const match = text.match(/^建立(?:賽事|活動)\s+(\d{4}-\d{2}-\d{2})\s+(.+)$/);
-  if (!match) return p.commit('格式：建立賽事 YYYY-MM-DD 賽事名稱');
-  const [, date, title] = match;
-  const timestamp = Date.parse(`${date}T00:00:00+08:00`);
-  if (!validString(title, 80) || !Number.isFinite(timestamp) || timestamp <= Date.now()) return p.commit('日期需為未來日期，名稱需為 1–80 字。');
-  const id = `event-${date}-${event.webhookEventId.slice(-8).toLowerCase()}`;
-  p.add(`INSERT INTO activities(id,title,starts_at,location,capacity,status,source,created_event_id)
-    SELECT ?,?,?,?,?,?,?,? WHERE ${p.guard} ON CONFLICT(id) DO NOTHING`, id, title.trim(), new Date(timestamp).toISOString(), '未提供', 10000, 'open', 'LINE 管理員建立', event.webhookEventId, event.webhookEventId);
-  p.add(`INSERT INTO admin_audit(event_id,actor_user_id,action) SELECT ?,?,? WHERE ${p.guard}`, event.webhookEventId, event.source.userId, 'activity_quick_create', event.webhookEventId);
-  return p.commit(`活動已建立：${title.trim()}（${date}）。目前地點為「未提供」、名額為 10000；如需完整地點／名額，請使用 /admin activity JSON。`);
 }
 
 async function buildReply(db, env, event) {
@@ -197,7 +175,7 @@ async function buildReply(db, env, event) {
   if (text.startsWith('/monitor')) return monitorCommand(db, env, event, text, p);
   if (text.startsWith('/admin')) return adminPlan(db, env, event, text, p);
   if (text === '指令' || text === '說明' || text === 'help' || text === '幫助') return p.commit(COMMAND_HELP);
-  if (/^建立(?:賽事|活動)/.test(text)) return quickActivityPlan(db, env, event, text, p);
+  if (/^(?:建立|新增|添加)(?:賽事|活動)/.test(text)) return p.commit('新增賽事／活動功能已停用。');
   if (text === '取消') {
     if (context) p.add(`DELETE FROM conversations WHERE context_key=? AND ${p.guard}`, context, eventId);
     return p.commit('已結束報名對話；已完成的報名不會被取消。');

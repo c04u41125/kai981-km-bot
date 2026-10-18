@@ -1,11 +1,10 @@
-import { scanMm, mmStatus } from './mm-monitor.js';
 const SOURCE = 'https://shop.funbox.com.tw/categories/XI/KB';
 const sql = (db, query, ...args) => db.prepare(query).bind(...args);
 
 export async function monitorStatus(db) {
   const state = await db.prepare("SELECT initialized,last_success,last_error FROM monitor_state WHERE id='funbox'").first();
   const count = await db.prepare('SELECT COUNT(*) AS count FROM monitor_products').first();
-  return { source: SOURCE, interval_minutes: 1, ...state, known_products: count.count, mmtoy: await mmStatus(db) };
+  return { source: SOURCE, interval_minutes: 1, ...state, known_products: count.count, mmtoy: { enabled: false, status: 'disabled' } };
 }
 
 // 此指令僅接受已驗證簽章事件；群組目的地不能由文字指定。
@@ -19,7 +18,7 @@ export async function monitorCommand(db, env, event, text, plan) {
     const sub = await sql(db, 'SELECT enabled FROM monitor_subscriptions WHERE target_id=?', target).first();
     const pending = await sql(db, "SELECT COUNT(*) AS count FROM monitor_outbox WHERE target_id=? AND status='pending'", target).first();
     const failed = await sql(db, "SELECT COUNT(*) AS count FROM monitor_outbox WHERE target_id=? AND status='failed'", target).first();
-    return plan.commit(`Funbox 新品／M.M小舖補貨監測\n本群組：${sub?.enabled ? '已訂閱' : '未訂閱'}\n每分鐘檢查，非即時保證。\n已記錄：${state.known_products} 件\n最後成功：${state.last_success ? new Date(state.last_success * 1000).toISOString() : '尚未完成'}\n狀態：${state.last_error || '正常'}\n待送：${pending.count}，失敗：${failed.count}\n來源：${SOURCE}\n\nM.M小舖：${state.mmtoy.known_products} 件\n最後成功：${state.mmtoy.last_success ? new Date(state.mmtoy.last_success * 1000).toISOString() : '尚未完成'}\n狀態：${state.mmtoy.last_error || '正常'}`);
+    return plan.commit(`Funbox 新品監測\n本群組：${sub?.enabled ? '已訂閱' : '未訂閱'}\n每分鐘檢查，非即時保證。\n已記錄：${state.known_products} 件\n最後成功：${state.last_success ? new Date(state.last_success * 1000).toISOString() : '尚未完成'}\n狀態：${state.last_error || '正常'}\n待送：${pending.count}，失敗：${failed.count}\n來源：${SOURCE}\n\nM.M小舖監控：已停用`);
   }
   if (!['/monitor on','/monitor off'].includes(text)) return plan.commit('監測指令：/monitor on、/monitor off、/monitor status。');
   const enabled = text.endsWith(' on') ? 1 : 0;
@@ -27,7 +26,7 @@ export async function monitorCommand(db, env, event, text, plan) {
     ON CONFLICT(target_id) DO UPDATE SET enabled=excluded.enabled,actor_user_id=excluded.actor_user_id,updated_at=unixepoch()`, target, enabled, event.source.userId, event.webhookEventId);
   if (!enabled) plan.add(`UPDATE monitor_outbox SET status='cancelled' WHERE target_id=? AND status='pending' AND ${plan.guard}`, target, event.webhookEventId);
   plan.add(`INSERT INTO admin_audit(event_id,actor_user_id,action) SELECT ?,?,? WHERE ${plan.guard}`, event.webhookEventId, event.source.userId, enabled ? 'monitor_on' : 'monitor_off', event.webhookEventId);
-  return plan.commit(enabled ? '本群組已訂閱 Funbox 新品與 M.M小舖補貨通知。M.M小舖僅在補貨中變成可購買時通知。每分鐘檢查；首次建立基準，不推播既有商品。通知代表分類首次發現，並非保證可購買。' : '本群組已停止新品通知並取消待送訊息；已在傳送中的訊息可能仍會送達。');
+  return plan.commit(enabled ? '本群組已訂閱 Funbox 新品通知。M.M小舖監控已停用。每分鐘檢查；首次建立基準，不推播既有商品。通知代表分類首次發現，並非保證可購買。' : '本群組已停止新品通知並取消待送訊息；已在傳送中的訊息可能仍會送達。');
 }
 
 async function catalog() {
@@ -55,7 +54,7 @@ async function catalog() {
       products.set(String(row.id), { id: String(row.id), title: row.title.trim(), url: url.href, price });
     }
     if (rows.length < 18) {
-      // 空分類也可能代表來源異常；不將它當成成功的首次基準。
+      // 第一頁空分類才是來源異常；後續空頁代表已掃描完畢。
       if (!products.size) throw new Error('SOURCE_EMPTY');
       return [...products.values()];
     }
@@ -88,10 +87,11 @@ async function scan(db, owner) {
 }
 
 async function deliver(db, env, owner) {
+  await db.prepare("UPDATE monitor_outbox SET status='cancelled' WHERE product_id LIKE 'mm:%' AND status='pending'").run();
   if (!env.LINE_CHANNEL_ACCESS_TOKEN) return;
   // LINE retry key 有效期為 24 小時；23 小時後停止自動重試，以免重複推播。
   await db.prepare("UPDATE monitor_outbox SET status='failed' WHERE status='pending' AND first_attempt<unixepoch()-82800").run();
-  const rows = (await db.prepare("SELECT * FROM monitor_outbox WHERE status='pending' ORDER BY id LIMIT 5").all()).results;
+  const rows = (await db.prepare("SELECT * FROM monitor_outbox WHERE status='pending' AND product_id NOT LIKE 'mm:%' ORDER BY id LIMIT 5").all()).results;
   for (const row of rows) {
     const claim = await sql(db, `UPDATE monitor_outbox SET attempts=attempts+1,first_attempt=COALESCE(first_attempt,unixepoch())
       WHERE id=? AND status='pending' AND EXISTS(SELECT 1 FROM monitor_subscriptions WHERE target_id=? AND enabled=1)
@@ -122,7 +122,6 @@ export async function scheduledMonitor(env) {
       await sql(db, "UPDATE monitor_state SET last_error=? WHERE id='funbox' AND lease_owner=?", code, owner).run();
       console.warn(JSON.stringify({ code }));
     }
-    await scanMm(db, owner);
     await deliver(db, env, owner);
   } finally {
     await sql(db, "UPDATE monitor_state SET lease_until=0 WHERE id='funbox' AND lease_owner=?", owner).run();
