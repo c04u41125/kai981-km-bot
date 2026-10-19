@@ -197,7 +197,7 @@ export async function scheduledG3(env, now = Date.now()) {
 }
 
 
-const G3_PAGE = 'https://kai981-km-bot.kai981-km-bot.workers.dev/g3';
+const G3_PAGE = 'https://c04u41125.github.io/KAI-981/g3.html';
 const txt = (text, size = 'sm', color = '#171918') => ({type:'text',text:String(text),size,color,wrap:true});
 export function g3Messages(summary) {
   if (!summary.available) return [{type:'text',text:summary.text.slice(0,4700)}];

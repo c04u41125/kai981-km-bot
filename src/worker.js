@@ -1,4 +1,3 @@
-import { G3_HTML } from './g3-page.js';
 import { monitorCommand, monitorStatus, scheduledMonitor } from './monitor.js';
 import { scheduledG3, g3Status, g3Weekend, g3RegionReply, g3Messages } from './g3.js';
 import { marketReply } from './market.js';
@@ -277,7 +276,9 @@ export default {
       // 從 primary 開始讀取，避免已開啟 D1 read replication 時讀到舊狀態。
       const db = env.DB.withSession('first-primary');
       if (url.pathname === '/g3') {
-        response = request.method === 'GET' ? new Response(G3_HTML, {headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"}}) : json({error:'Method not allowed'},405);
+        const destination = new URL('https://c04u41125.github.io/KAI-981/g3.html');
+        for (const key of ['region','week']) if (url.searchParams.has(key)) destination.searchParams.set(key,url.searchParams.get(key));
+        response = request.method === 'GET' ? Response.redirect(destination.toString(),302) : json({error:'Method not allowed'},405);
       } else if (url.pathname === '/webhook') {
         response = request.method === 'POST' ? await webhook(request, env, db) : json({ error: 'Method not allowed' }, 405);
       } else if (url.pathname.startsWith('/api/')) {
