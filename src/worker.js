@@ -7,7 +7,7 @@ const COMMAND_HELP = String.raw`可用指令：
 3. 查詢指令：指令
 4. 查詢行情：型號或中文名行情（例如 UX-17行情、紅天馬行情）
 G3 官方賽程：本週G3、G3狀態
-地區 G3（本週六日）：高雄G3、嘉義G3、樹林G3、宜蘭G3`;
+地區 G3（全台縣市／本週六日）：臺北G3、新北G3、臺中G3、高雄G3；嘉義／新竹可指定縣或市`;
 const UNKNOWN = '目前沒有已確認資料';
 const HELP = COMMAND_HELP;
 const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[\s？?。！!]/g, '');
@@ -158,7 +158,7 @@ async function buildReply(db, env, event) {
   const existing = await stmt(db, 'SELECT * FROM webhook_events WHERE event_id=?', eventId).first();
   if (existing) return existing;
   const p = planFor(db, eventId);
-  if (event.type === 'memberJoined') return p.commit(`歡迎加入迴眾 KAI 9.81！\n使用時請先 @迴眾 KM Bot，再輸入指令。\n\n成員可用指令：\n・隊規：查看六條戰隊規章\n・官網：開啟戰隊官網\n・UX-17行情：查詢型號或中文名的成交中位數\n・本週G3：查詢當週末 G3 賽程\n・高雄G3／嘉義G3／樹林G3／宜蘭G3：查詢地區週末賽程\n・指令：查看完整指令\n\n一般聊天不會回覆；@all 訊息會忽略。`);
+  if (event.type === 'memberJoined') return p.commit(`歡迎加入迴眾 KAI 9.81！\n使用時請先 @迴眾 KM Bot，再輸入指令。\n\n成員可用指令：\n・隊規：查看六條戰隊規章\n・官網：開啟戰隊官網\n・UX-17行情：查詢型號或中文名的成交中位數\n・本週G3：查詢當週末 G3 賽程\n・各縣市G3（例如臺北G3、高雄G3）：查詢地區週末賽程\n・指令：查看完整指令\n\n一般聊天不會回覆；@all 訊息會忽略。`);
   const text = removeBotMention(event);
   if (!text) return p.commit('請在 @Bot 後輸入問題或指令。');
   const market = await marketReply(text);

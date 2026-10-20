@@ -4,7 +4,7 @@ export const G3_SOURCES = [
   { id: '1MSSZJZKCqDWmPcfIuI4iNLNXU0nyD2VIAU0gr0iBzv8', name: 'B4合作據點' },
   { id: '1Y3jb2TJx8HHCBEHhXM8ugX3IUpSDD_hY-BZ6f3HVloo', name: '夾子園' }
 ];
-const REGIONS = ['嘉義市', '新北市樹林區', '宜蘭縣', '高雄市', '高雄縣'];
+const REGIONS = ["基隆市", "臺北市", "新北市", "桃園市", "新竹市", "新竹縣", "苗栗縣", "臺中市", "彰化縣", "南投縣", "雲林縣", "嘉義市", "嘉義縣", "臺南市", "高雄市", "屏東縣", "宜蘭縣", "花蓮縣", "臺東縣", "澎湖縣", "金門縣", "連江縣"];
 const sql = (db, query, ...values) => db.prepare(query).bind(...values);
 const local = now => new Date(now + 8 * 3600000);
 const day = date => date.toISOString().slice(0, 10);
@@ -54,7 +54,8 @@ async function readSource(source, now) {
   let datedRows = 0;
   for (const row of rows.slice(headerIndex + 1)) {
     const address = (row[cols.address] || '').normalize('NFKC').replace(/\s/g, '');
-    const region = REGIONS.find(r => address.includes(r));
+    const canonical = address.replace(/台/g, '臺').replace('高雄縣','高雄市').replace('臺中縣','臺中市').replace('臺南縣','臺南市').replace('桃園縣','桃園市').replace('臺北縣','新北市');
+    const region = REGIONS.find(r => canonical.includes(r));
     const rawDate = row[cols.date] || '';
     if (/^(?:20\d{2}\/)?\d{1,2}\/\d{1,2}$/.test(rawDate)) datedRows++;
     if (!region) continue;
@@ -89,7 +90,7 @@ async function refresh(db, owner, now) {
   const queries = [sql(db, 'UPDATE g3_events SET active=0 WHERE ' + guard, owner)];
   for (const e of events.values()) {
     queries.push(sql(db, 'INSERT INTO g3_events(id,source_id,source_url,region,venue,address,event_date,event_time,phone,capacity,registration,division) SELECT ?,?,?,?,?,?,?,?,?,?,?,? WHERE ' + guard +
-      ' ON CONFLICT(id) DO UPDATE SET source_id=excluded.source_id,source_url=excluded.source_url,phone=excluded.phone,capacity=excluded.capacity,registration=excluded.registration,active=1,updated_at=unixepoch()',
+      ' ON CONFLICT(id) DO UPDATE SET region=excluded.region,source_id=excluded.source_id,source_url=excluded.source_url,phone=excluded.phone,capacity=excluded.capacity,registration=excluded.registration,active=1,updated_at=unixepoch()',
       e.id,e.source_id,e.source_url,e.region,e.venue,e.address,e.event_date,e.event_time,e.phone,e.capacity,e.registration,e.division,owner));
   }
   queries.push(sql(db, 'UPDATE g3_state SET period_start=?,period_end=?,last_success=unixepoch(),last_error=NULL,refresh_day=? WHERE id=1 AND ' + guard,
@@ -104,19 +105,21 @@ export async function g3Status(db) {
     weekly_push: '星期一 09:00', sources: G3_SOURCES.map(s => ({ name: s.name, url: sourceURL(s) })) };
 }
 
-const REGION_QUERIES = {
-  '高雄': ['高雄市', '高雄縣'], '高雄市': ['高雄市'], '高雄縣': ['高雄縣'],
-  '嘉義': ['嘉義市'], '嘉義市': ['嘉義市'],
-  '樹林': ['新北市樹林區'], '樹林區': ['新北市樹林區'], '新北市樹林區': ['新北市樹林區'],
-  '宜蘭': ['宜蘭縣'], '宜蘭縣': ['宜蘭縣']
-};
+const REGION_QUERIES = Object.fromEntries(REGIONS.flatMap(r => [[r,[r]], [r.slice(0,-1),[r]]]));
+REGION_QUERIES['嘉義'] = ['嘉義市','嘉義縣'];
+REGION_QUERIES['新竹'] = ['新竹市','新竹縣'];
+REGION_QUERIES['馬祖'] = ['連江縣'];
+for (const key of ['樹林','樹林區','新北市樹林區']) REGION_QUERIES[key] = ['新北市樹林區'];
+function matchesRegion(row, region) {
+  return region === '新北市樹林區' ? row.region === '新北市' && row.address.includes('樹林區') : row.region === region;
+}
 
 export async function g3RegionReply(db, text) {
-  const command = text.normalize('NFKC').replace(/\s/g, '');
+  const command = text.normalize('NFKC').replace(/\s/g, '').replace(/台/g,'臺');
   const match = command.match(/^(?:本週)?(.+?)G3$/i) || command.match(/^G3(.+)$/i);
   if (!match) return null;
   const regions = REGION_QUERIES[match[1]];
-  if (!regions) return '地區 G3 查詢：高雄G3、嘉義G3、樹林G3、宜蘭G3（本週六日）。嘉義僅限嘉義市，樹林僅限新北市樹林區；其他地區目前沒有已確認資料。';
+  if (!regions) return '支援全台 22 縣市 G3 查詢，例如：臺北G3、新北G3、臺中G3、高雄G3。嘉義、新竹可加縣／市；未加時顯示兩者。樹林G3仍可查詢樹林區。';
   return await g3Weekend(db, Date.now(), regions);
 }
 
@@ -131,9 +134,9 @@ export async function g3Weekend(db, now = Date.now(), regions = REGIONS) {
     return { week: day(monday), available: false, start: day(saturday), end: day(sunday), regions, rows: [], sources: state.sources, text: header + '\n目前沒有已確認資料：賽程來源未更新、讀取失敗或尚未完整涵蓋本週末。請核對官方時間表。' + links };
   }
   const rows = (await sql(db, 'SELECT * FROM g3_events WHERE active=1 AND event_date BETWEEN ? AND ? ORDER BY event_date,event_time,region,venue',day(saturday),day(sunday)).all()).results;
-  const blocks = rows.filter(e => regions.includes(e.region)).map(e => e.event_date + ' ' + e.event_time + '｜' + e.region + '\n' + e.venue + '｜' + e.division +
+  const blocks = rows.filter(e => regions.some(region => matchesRegion(e, region))).map(e => e.event_date + ' ' + e.event_time + '｜' + e.region + '\n' + e.venue + '｜' + e.division +
     '\n地址：' + e.address + '\n名額：' + e.capacity + '｜報名：' + e.registration + '\n店家電話：' + e.phone);
-  return { week: day(monday), available: true, start: day(saturday), end: day(sunday), regions, rows: rows.filter(e => regions.includes(e.region)), sources: state.sources, updated: state.last_success, text: header + '\n\n' + (blocks.length ? blocks.join('\n\n') : '已核對三份官方時間表，目前未列出符合地區的週六、日賽事。') +
+  return { week: day(monday), available: true, start: day(saturday), end: day(sunday), regions, rows: rows.filter(e => regions.some(region => matchesRegion(e, region))), sources: state.sources, updated: state.last_success, text: header + '\n\n' + (blocks.length ? blocks.join('\n\n') : '已核對三份官方時間表，目前未列出符合地區的週六、日賽事。') +
     '\n\n賽程可能異動；實際報名方式、名額以店家公告為準。此通知不代表已完成報名。' + links };
 }
 
@@ -201,14 +204,17 @@ const G3_PAGE = 'https://c04u41125.github.io/KAI-981/g3.html';
 const txt = (text, size = 'sm', color = '#171918') => ({type:'text',text:String(text),size,color,wrap:true});
 export function g3Messages(summary) {
   if (!summary.available) return [{type:'text',text:summary.text.slice(0,4700)}];
-  const groups = [
-    {name:'嘉義市', regions:['嘉義市']}, {name:'樹林區', regions:['新北市樹林區']},
-    {name:'宜蘭縣', regions:['宜蘭縣']}, {name:'高雄', regions:['高雄市','高雄縣']}
-  ].filter(g => g.regions.some(r => summary.regions.includes(r)));
+  const groups = summary.regions.map(region => ({name:region, regions:[region]}));
   const bubbles = groups.map(g => {
-    const rows = summary.rows.filter(r => g.regions.includes(r.region));
+    const rows = summary.rows.filter(r => g.regions.some(region => matchesRegion(r,region)));
     const uri = G3_PAGE + '?region=' + encodeURIComponent(g.name) + '&week=' + summary.week;
     return {type:'bubble',size:'mega',header:{type:'box',layout:'vertical',backgroundColor:'#171918',spacing:'sm',contents:[txt('迴眾 KAI 9.81 / G3','xs','#D9FF62'),{...txt(g.name + ' · 本週末','xl','#FFFFFF'),weight:'bold'},txt(summary.start + ' — ' + summary.end,'xs','#FFFFFF')]},body:{type:'box',layout:'vertical',spacing:'lg',backgroundColor:'#F0EFE9',contents:[{...txt(rows.length + ' 場官方賽事','xl'),weight:'bold'},txt('星期六 '+rows.filter(r=>r.event_date===summary.start).length+' 場  /  星期日 '+rows.filter(r=>r.event_date===summary.end).length+' 場'),{type:'separator'},...rows.slice(0,3).map(r=>txt(r.event_date.slice(5)+' '+r.event_time+'｜'+r.venue+' · '+r.division)),txt(rows.length>3?'另有 '+(rows.length-3)+' 場，點下方看完整賽程。':rows.length?'報名方式與名額以店家公告為準。':'已核對來源，本週末未列出此地區場次。','xs','#62665C')]},footer:{type:'box',layout:'vertical',contents:[{type:'button',style:'primary',color:'#344421',action:{type:'uri',label:'查看完整賽程 ↗',uri}}]}};
   });
-  return [{type:'flex',altText:'迴眾 G3｜'+summary.start+'～'+summary.end+'｜'+summary.rows.length+' 場，點開查看地區卡片',contents:bubbles.length===1?bubbles[0]:{type:'carousel',contents:bubbles}}];
+  // 每組最多 8 張，22 縣市拆成 3 則，低於 LINE 每次 5 則限制。
+  const messages = [];
+  for (let i=0;i<bubbles.length;i+=8) {
+    const contents = bubbles.slice(i,i+8);
+    messages.push({type:'flex',altText:'迴眾 G3｜'+summary.start+'～'+summary.end+'｜地區卡片 '+(i+1)+'–'+(i+contents.length),contents:contents.length===1?contents[0]:{type:'carousel',contents}});
+  }
+  return messages;
 }
