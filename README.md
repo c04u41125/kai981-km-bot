@@ -229,3 +229,11 @@ LINE 不能直接連到 localhost。本機可先做網頁查詢，真實 LINE We
 | 管理操作被拒絕 | 私訊、正確 LINE User ID、相同 Provider、Secret 白名單是否設定 |
 
 完整手動操作步驟見 `MANUAL_CHECKLIST.md`。本次沒有執行其中步驟，也沒有執行任何自動化測試。上線前請先用獨立測試 Channel／D1 完成驗收，再自行決定發布。
+
+## 2026-10-26：每週補送與管理員重新整理
+
+每週一台灣時間 09:00 重新讀取三份官方表單。任一來源失敗、格式錯誤或未完整涵蓋當週六日，均不發送錯誤公告；每隔一小時重試，跨日持續到成功。跨週改查新一週，不補送過期週末。Cron 每 5 分鐘執行，實際開始時間可能有排程延遲。讀取成功才建立公告；同一群組同一週成功公告不重複推播。LINE 發送沿用持久 outbox 與 retry key，永久 API 錯誤仍需修復憑證或收件設定。
+
+管理員在群組輸入 `@Bot 重新整理G3`，或私訊 `/admin g3 refresh`。僅 ADMIN_LINE_USER_IDS 白名單可用；群組必須明確 @Bot，@all 仍忽略。請求寫入 D1，5 分鐘內開始讀取，可用 `G3狀態` 查看結果；失敗每小時重試。重新整理不重發已公告週次，也不變更官方來源網址。若官方更換試算表 ID，需要維護 src/g3.js 的 G3_SOURCES；不會自行推測未公布賽程。
+
+發布先執行 `node node_modules/wrangler/bin/wrangler.js d1 migrations apply DB --remote`，再執行 `node node_modules/wrangler/bin/wrangler.js deploy`。本次未執行自動化測試。
