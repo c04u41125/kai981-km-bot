@@ -99,7 +99,7 @@ async function refresh(db, owner, now) {
 }
 
 export async function g3Status(db) {
-  const state = await db.prepare('SELECT period_start,period_end,last_success,last_error FROM g3_state WHERE id=1').first();
+  const state = await db.prepare('SELECT period_start,period_end,last_success,last_error,last_attempt,refresh_requested,refresh_handled,weekly_ready FROM g3_state WHERE id=1').first();
   const count = await db.prepare('SELECT COUNT(*) AS count FROM g3_events WHERE active=1').first();
   return { ...state, events: count.count, regions: REGIONS, timezone: 'Asia/Taipei',
     weekly_push: '星期一 09:00', sources: G3_SOURCES.map(s => ({ name: s.name, url: sourceURL(s) })) };
@@ -142,13 +142,14 @@ export async function g3Weekend(db, now = Date.now(), regions = REGIONS) {
 
 async function enqueue(db, owner, now) {
   const summary = await g3Weekend(db, now);
+  if (!summary.available) return;
   const chunks = [summary.text.slice(0, 4700)];
   const messages = JSON.stringify(g3Messages(summary));
-  const targets = (await sql(db, 'SELECT target_id FROM monitor_subscriptions s WHERE enabled=1 AND NOT EXISTS(SELECT 1 FROM g3_outbox o WHERE o.target_id=s.target_id AND o.week_start=?)', summary.week).all()).results;
+  const targets = (await sql(db, 'SELECT target_id FROM monitor_subscriptions s WHERE enabled=1 AND NOT EXISTS(SELECT 1 FROM g3_outbox o WHERE o.target_id=s.target_id AND o.week_start=? AND o.is_schedule=1)', summary.week).all()).results;
   for (const target of targets) {
     await db.batch(chunks.map((message, part) => sql(db,
-      'INSERT INTO g3_outbox(target_id,week_start,part,message,retry_key,messages_json) SELECT ?,?,?,?,?,? WHERE ' + guard +
-      ' ON CONFLICT(target_id,week_start,part) DO NOTHING',
+      'INSERT INTO g3_outbox(target_id,week_start,part,message,retry_key,messages_json,is_schedule) SELECT ?,?,?,?,?,?,1 WHERE ' + guard +
+      " ON CONFLICT(target_id,week_start,part) DO UPDATE SET message=excluded.message,messages_json=excluded.messages_json,retry_key=excluded.retry_key,is_schedule=1,status='pending',first_attempt=NULL,last_http_status=NULL WHERE g3_outbox.is_schedule=0",
       target.target_id,summary.week,part,message,crypto.randomUUID(),messages,owner)));
   }
 }
@@ -180,19 +181,34 @@ export async function scheduledG3(env, now = Date.now()) {
   const state = await sql(db,'UPDATE g3_state SET lease_owner=?,lease_until=unixepoch()+240 WHERE id=1 AND lease_until<unixepoch() RETURNING *',owner).first();
   if (!state) return;
   try {
-    const date = local(now), today = day(date), monday = date.getUTCDay() === 1;
+    const date = local(now), today = day(date);
+    const monday = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - (date.getUTCDay() + 6) % 7));
+    const week = day(monday);
+    // 週一 09:00 起整週保留補送資格；跨週後只公告新一週，避免補送過期賽程。
+    const weeklyDue = date.getTime() >= monday.getTime() + 9 * 3600000;
     const firstOdd = date.getUTCDate() === 1 && (date.getUTCMonth() + 1) % 2 === 1;
-    const refreshDue = !state.last_success || state.last_error || ((monday || firstOdd) && date.getUTCHours() >= 8 && state.refresh_day !== today);
-    if (refreshDue && now/1000 - state.last_attempt >= 3600) {
-      await sql(db,'UPDATE g3_state SET last_attempt=unixepoch() WHERE id=1 AND lease_owner=?',owner).run();
-      try { await refresh(db,owner,now); }
-      catch (error) {
-        await sql(db,'UPDATE g3_state SET last_error=? WHERE id=1 AND lease_owner=?',
+    const manual = state.refresh_requested > state.refresh_handled;
+    const refreshDue = manual || !state.last_success || state.last_error ||
+      (weeklyDue && state.weekly_ready !== week) ||
+      (firstOdd && date.getUTCHours() >= 8 && state.refresh_day !== today);
+    if (refreshDue && (manual || now/1000 - state.last_attempt >= 3600)) {
+      await sql(db,'UPDATE g3_state SET last_attempt=unixepoch(),refresh_handled=? WHERE id=1 AND ' + guard,state.refresh_requested,owner).run();
+      try {
+        await refresh(db,owner,now);
+        if (weeklyDue) {
+          const summary = await g3Weekend(db,now);
+          if (!summary.available) throw new Error('G3_WEEKEND_NOT_COVERED');
+          await sql(db,'UPDATE g3_state SET weekly_ready=? WHERE id=1 AND ' + guard,week,owner).run();
+        }
+      } catch (error) {
+        await sql(db,'UPDATE g3_state SET last_error=? WHERE id=1 AND ' + guard,
           /^G3_[A-Z_]+$/.test(error.message)?error.message:'G3_SYNC_FAILED',owner).run();
       }
     }
-    // 每週一 09:00 後可補送；資料庫唯一限制防止每五分鐘重複建立通知。
-    if (monday && date.getUTCHours() >= 9) await enqueue(db,owner,now);
+    const ready = await db.prepare('SELECT weekly_ready,last_error FROM g3_state WHERE id=1').first();
+    if (weeklyDue && ready.weekly_ready === week && !ready.last_error) await enqueue(db,owner,now);
+    // 上週尚未送出的通知不在新一週補送。
+    await sql(db,"UPDATE g3_outbox SET status='cancelled' WHERE status='pending' AND week_start<? AND " + guard,week,owner).run();
     await deliver(db,env,owner);
   } finally {
     await sql(db,'UPDATE g3_state SET lease_until=0 WHERE id=1 AND lease_owner=?',owner).run();

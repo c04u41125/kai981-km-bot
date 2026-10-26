@@ -126,12 +126,17 @@ async function adminPlan(db, env, event, text, p) {
   const user = event.source.userId;
   const admins = (env.ADMIN_LINE_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
   if (!['user','group','room'].includes(event.source.type) || !user || !admins.includes(user)) return p.commit('管理操作已拒絕：需要管理員白名單。');
+  if (text === '/admin g3 refresh') {
+    p.add(`UPDATE g3_state SET refresh_requested=refresh_requested+1 WHERE id=1 AND ${p.guard}`, event.webhookEventId);
+    p.add(`INSERT INTO admin_audit(event_id,actor_user_id,action) SELECT ?,?,? WHERE ${p.guard}`, event.webhookEventId, user, 'g3_refresh', event.webhookEventId);
+    return p.commit('已排入 G3 表單重新整理，預計 5 分鐘內開始。可輸入「G3狀態」查看結果；失敗後每小時重試。已公告的同一週不會重複推播。');
+  }
   if (text === '/admin pending') {
     const rows = (await db.prepare("SELECT id,question FROM pending_questions WHERE status='pending' ORDER BY id DESC LIMIT 10").all()).results;
     return p.commit(rows.length ? rows.map(r => `#${r.id} ${r.question.slice(0, 300)}`).join('\n') : '目前沒有待補問題。');
   }
   const match = text.match(/^\/admin (knowledge|close|delete|resolve)\s+([\s\S]+)$/);
-  if (!match) return p.commit('管理指令：/admin pending、/admin knowledge {JSON}、/admin close 活動ID（或 delete）、/admin resolve 問題ID。新增賽事／活動已停用。');
+  if (!match) return p.commit('管理指令：重新整理G3（或 /admin g3 refresh）、/admin pending、/admin knowledge {JSON}、/admin close 活動ID（或 delete）、/admin resolve 問題ID。新增賽事／活動已停用。');
   const [, action, payload] = match;
   let data;
   try { if (action === 'knowledge') data = JSON.parse(payload); }
@@ -169,8 +174,9 @@ async function buildReply(db, env, event) {
   if (['本週G3','本週g3','G3','g3'].includes(text)) { const summary = await g3Weekend(db); return p.commit(summary.text, null, [], g3Messages(summary)); }
   if (['G3狀態','g3狀態'].includes(text)) {
     const s = await g3Status(db);
-    return p.commit(`G3 賽程：${s.period_start || '未讀取'}～${s.period_end || '未讀取'}\n已記錄 ${s.events} 場\n最後更新：${s.last_success ? new Date(s.last_success * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '尚未完成'}\n來源狀態：${s.last_error || '正常'}\n每週一台灣時間 09:00 推播至已啟用 /monitor on 的群組。`);
+    return p.commit(`G3 賽程：${s.period_start || '未讀取'}～${s.period_end || '未讀取'}\n已記錄 ${s.events} 場\n最後更新：${s.last_success ? new Date(s.last_success * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '尚未完成'}\n來源狀態：${s.last_error || '正常'}\n手動更新：${s.refresh_requested > s.refresh_handled ? '等待執行' : '無待處理請求'}\n讀取失敗每小時重試；管理員可輸入「重新整理G3」。\n每週一台灣時間 09:00 推播至已啟用 /monitor on 的群組。`);
   }
+  if (/^重新整理\s*G3$/i.test(text) || text === '/admin g3 refresh') return adminPlan(db, env, event, '/admin g3 refresh', p);
   const regionalG3 = await g3RegionReply(db, text);
   if (regionalG3 !== null) return typeof regionalG3 === 'string' ? p.commit(regionalG3) : p.commit(regionalG3.text, null, [], g3Messages(regionalG3));
   if (text.startsWith('/monitor')) return monitorCommand(db, env, event, text, p);
