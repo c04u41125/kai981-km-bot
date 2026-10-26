@@ -1,3 +1,4 @@
+import { bracketAPI, bracketCommand } from './brackets.js';
 import { monitorCommand, monitorStatus, scheduledMonitor } from './monitor.js';
 import { scheduledG3, g3Status, g3Weekend, g3RegionReply, g3Messages } from './g3.js';
 import { marketReply } from './market.js';
@@ -166,6 +167,7 @@ async function buildReply(db, env, event) {
   if (event.type === 'memberJoined') return p.commit(`歡迎加入迴眾 KAI 9.81！\n使用時請先 @迴眾 KM Bot，再輸入指令。\n\n成員可用指令：\n・隊規：查看六條戰隊規章\n・官網：開啟戰隊官網\n・UX-17行情：查詢型號或中文名的成交中位數\n・本週G3：查詢當週末 G3 賽程\n・各縣市G3（例如臺北G3、高雄G3）：查詢地區週末賽程\n・指令：查看完整指令\n\n一般聊天不會回覆；@all 訊息會忽略。`);
   const text = removeBotMention(event);
   if (!text) return p.commit('請在 @Bot 後輸入問題或指令。');
+  if (/^(建立賽程|賽程授權|停用賽程編輯)(?:\s|$)/.test(text)) return bracketCommand(db,env,event,text,p);
   const market = await marketReply(text);
   if (market !== null) return p.commit(market);
   const source = event.source;
@@ -281,7 +283,9 @@ export default {
     try {
       // 從 primary 開始讀取，避免已開啟 D1 read replication 時讀到舊狀態。
       const db = env.DB.withSession('first-primary');
-      if (url.pathname === '/g3') {
+      if (url.pathname === '/api/brackets' || url.pathname.startsWith('/api/brackets/')) {
+        response = await bracketAPI(request,env,db);
+      } else if (url.pathname === '/g3') {
         const destination = new URL('https://c04u41125.github.io/KAI-981/g3.html');
         for (const key of ['region','week']) if (url.searchParams.has(key)) destination.searchParams.set(key,url.searchParams.get(key));
         response = request.method === 'GET' ? Response.redirect(destination.toString(),302) : json({error:'Method not allowed'},405);
