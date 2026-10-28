@@ -1,4 +1,4 @@
-import { wishCards, wishCancelConfirmation, wishQuickReply } from './wishlist-ui.js';
+import { wishCards, wishCancelConfirmation, wishQuickReply, wishOwner } from './wishlist-ui.js';
 const HELP = `戰隊許願板（本群組共用）
 ・許願 UX-18-01 漢克：登記型號及群內稱呼
 ・許願板：查看所有需求
@@ -22,11 +22,20 @@ export async function wishlistCommand(db, event, text, p) {
   const scope = `${source.type}:${scopeId}`;
   const user = source.userId;
   const eventId = event.webhookEventId;
+  if (!user) return p.commit('無法辨識你的 LINE 身分，請使用自己的 LINE 帳號重新 @Bot。');
+  const owner = await wishOwner(JSON.stringify([scope, user]));
+  if (event.type === 'postback') {
+    const [command, boundOwner] = text.split('|');
+    // Legacy personal buttons lack an owner; refuse rather than act on another clicker's wishes.
+    if (/^(新增|確認取消 |取消許願 )/.test(command) && !boundOwner) return p.commit('這張卡片已更新，請重新 @Bot 輸入「我的許願」取得新版卡片。');
+    if (boundOwner && boundOwner !== owner) return p.commit('只有本人可以進行操作');
+    text = command;
+  }
   if (text === '新增' || text === '查詢') {
     const hint = text === '新增' ? '請在本群組 @Bot，再輸入：\n許願 UX-18-01 你的群內稱呼\n\n替換成你想要的型號與稱呼即可；每筆為 1 顆。' : '請在本群組 @Bot，再輸入：\n許願板 UX-18-01\n\n替換型號即可找出想要這款的成員。也可以直接點卡片上的「查看此型號需求」。';
-    return p.commit(hint, null, [], [{ type: 'text', text: hint, quickReply: wishQuickReply() }]);
+    return p.commit(hint, null, [], [{ type: 'text', text: hint, quickReply: wishQuickReply(owner) }]);
   }
-  if (text.startsWith('確認取消 ')) return p.commit('請確認是否取消自己的許願。', null, [], wishCancelConfirmation(text.slice(5)));
+  if (text.startsWith('確認取消 ')) return p.commit('請確認是否取消自己的許願。', null, [], wishCancelConfirmation(text.slice(5), owner));
   const add = text.match(/^許願\s+(\S+)\s+(.+)$/u);
   const cancel = text.match(/^取消許願\s+(\S+)$/u);
   if (add || cancel) {
@@ -57,9 +66,19 @@ export async function wishlistCommand(db, event, text, p) {
   const where = 'scope_key=?' + (mine ? ' AND user_id=?' : '') + (model ? ' AND model=?' : '');
   const args = [scope, ...(mine ? [user] : []), ...(model ? [model] : [])];
   const total = (await db.prepare(`SELECT COUNT(*) AS n FROM wishlist WHERE ${where}`).bind(...args).first()).n;
-  if (!total) return p.commit('目前沒有符合的許願。', null, [], wishCards([], { mine, model }));
-  const pages = Math.ceil(total / 25);
+  if (!total) return p.commit(mine ? '你還沒有許願，快來登記吧' : '目前沒有符合的許願。', null, [], wishCards([], { mine, model, owner }));
+  const modelCount = (await db.prepare(`SELECT COUNT(DISTINCT model) AS n FROM wishlist WHERE ${where}`).bind(...args).first()).n;
+  // Overview pagination is by model, so a model's members never spill into another model card.
+  // A single-model view has member pagination for large groups.
+  const pages = Math.ceil(model ? total / 25 : modelCount / 5);
   if (page > pages) return p.commit(`目前共 ${pages} 頁。請輸入「${query[1]}${model ? ` ${model}` : ''} 第${pages}頁」。`);
-  const rows = (await db.prepare(`SELECT model,display_name FROM wishlist WHERE ${where} ORDER BY model,id LIMIT 25 OFFSET ?`).bind(...args, (page - 1) * 25).all()).results;
-  return p.commit(`許願板：${total} 筆需求，第 ${page}/${pages} 頁。`, null, [], wishCards(rows, { mine, model, total, page, pages }));
+  let rows;
+  if (model) {
+    const members = (await db.prepare(`SELECT display_name FROM wishlist WHERE ${where} ORDER BY id LIMIT 25 OFFSET ?`).bind(...args, (page - 1) * 25).all()).results;
+    rows = [{ model, count: total, names: members.map(r => r.display_name) }];
+  } else {
+    const groups = (await db.prepare(`SELECT model,COUNT(*) AS count FROM wishlist WHERE ${where} GROUP BY model ORDER BY model LIMIT 5 OFFSET ?`).bind(...args, (page - 1) * 5).all()).results;
+    rows = await Promise.all(groups.map(async group => ({ ...group, names: (await db.prepare(`SELECT display_name FROM wishlist WHERE ${where} AND model=? ORDER BY id LIMIT 20`).bind(...args, group.model).all()).results.map(r => r.display_name) })));
+  }
+  return p.commit(`許願板：${total} 筆需求，第 ${page}/${pages} 頁。`, null, [], wishCards(rows, { mine, model, total, page, pages, owner }));
 }
