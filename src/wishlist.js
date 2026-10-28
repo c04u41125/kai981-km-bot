@@ -1,3 +1,4 @@
+import { wishCards, wishCancelConfirmation, wishQuickReply } from './wishlist-ui.js';
 const HELP = `戰隊許願板（本群組共用）
 ・許願 UX-18-01 漢克：登記型號及群內稱呼
 ・許願板：查看所有需求
@@ -14,13 +15,18 @@ function modelKey(value) {
 }
 
 export async function wishlistCommand(db, event, text, p) {
-  if (!/^(?:許願|我的許願|取消許願)/.test(text)) return null;
+  if (!/^(?:許願|我的許願|取消許願)/.test(text) && !(event.type === 'postback' && /^(新增|查詢|確認取消 )/.test(text))) return null;
   const source = event.source;
   const scopeId = source.type === 'group' ? source.groupId : source.type === 'room' ? source.roomId : null;
   if (!scopeId) return p.commit(`請在戰隊群組 @Bot 使用許願板；每個群組的清單獨立。\n\n${HELP}`);
   const scope = `${source.type}:${scopeId}`;
   const user = source.userId;
   const eventId = event.webhookEventId;
+  if (text === '新增' || text === '查詢') {
+    const hint = text === '新增' ? '請在本群組 @Bot，再輸入：\n許願 UX-18-01 你的群內稱呼\n\n替換成你想要的型號與稱呼即可；每筆為 1 顆。' : '請在本群組 @Bot，再輸入：\n許願板 UX-18-01\n\n替換型號即可找出想要這款的成員。也可以直接點卡片上的「查看此型號需求」。';
+    return p.commit(hint, null, [], [{ type: 'text', text: hint, quickReply: wishQuickReply() }]);
+  }
+  if (text.startsWith('確認取消 ')) return p.commit('請確認是否取消自己的許願。', null, [], wishCancelConfirmation(text.slice(5)));
   const add = text.match(/^許願\s+(\S+)\s+(.+)$/u);
   const cancel = text.match(/^取消許願\s+(\S+)$/u);
   if (add || cancel) {
@@ -51,9 +57,9 @@ export async function wishlistCommand(db, event, text, p) {
   const where = 'scope_key=?' + (mine ? ' AND user_id=?' : '') + (model ? ' AND model=?' : '');
   const args = [scope, ...(mine ? [user] : []), ...(model ? [model] : [])];
   const total = (await db.prepare(`SELECT COUNT(*) AS n FROM wishlist WHERE ${where}`).bind(...args).first()).n;
-  if (!total) return p.commit(`${mine ? '你在本群組' : '本群組'}目前沒有${model ? ` ${model} 的` : ''}許願。\n登記範例：許願 UX-18-01 漢克`);
+  if (!total) return p.commit('目前沒有符合的許願。', null, [], wishCards([], { mine, model }));
   const pages = Math.ceil(total / 25);
   if (page > pages) return p.commit(`目前共 ${pages} 頁。請輸入「${query[1]}${model ? ` ${model}` : ''} 第${pages}頁」。`);
   const rows = (await db.prepare(`SELECT model,display_name FROM wishlist WHERE ${where} ORDER BY model,id LIMIT 25 OFFSET ?`).bind(...args, (page - 1) * 25).all()).results;
-  return p.commit(`${mine ? '我的許願' : '本群組許願板'}${model ? `｜${model}` : ''}\n${rows.map(r => `${r.model}｜${r.display_name}｜1 顆`).join('\n')}\n\n共 ${total} 筆需求，第 ${page}/${pages} 頁。${page < pages ? `\n下一頁：${query[1]}${model ? ` ${model}` : ''} 第${page + 1}頁` : ''}\n稱呼為成員自填；有多買可在群內聯繫，取得後請取消自己的許願。`);
+  return p.commit(`許願板：${total} 筆需求，第 ${page}/${pages} 頁。`, null, [], wishCards(rows, { mine, model, total, page, pages }));
 }
