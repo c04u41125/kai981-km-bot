@@ -133,7 +133,7 @@ async function adminPlan(db, env, event, text, p) {
   if (text === '/admin g3 refresh') {
     p.add(`UPDATE g3_state SET refresh_requested=refresh_requested+1 WHERE id=1 AND ${p.guard}`, event.webhookEventId);
     p.add(`INSERT INTO admin_audit(event_id,actor_user_id,action) SELECT ?,?,? WHERE ${p.guard}`, event.webhookEventId, user, 'g3_refresh', event.webhookEventId);
-    return p.commit('已排入 G3 表單重新整理，預計 5 分鐘內開始。可輸入「G3狀態」查看結果；失敗後每小時重試。已公告的同一週不會重複推播。');
+    return p.commit('已排入 G3 完整更新：檢查官方新公告 → 驗證表單 → 更新賽程，預計 5 分鐘內開始。輸入「G3狀態」查看公告與資料更新結果；讀取受阻會保留原來源。公告檢查失敗每小時重試（每日最多 6 次）。同一週不重複推播。');
   }
   if (text === '/admin pending') {
     const rows = (await db.prepare("SELECT id,question FROM pending_questions WHERE status='pending' ORDER BY id DESC LIMIT 10").all()).results;
@@ -182,7 +182,7 @@ async function buildReply(db, env, event) {
   if (['本週G3','本週g3','G3','g3'].includes(text)) { const summary = await g3Weekend(db); return p.commit(summary.text, null, [], g3Messages(summary)); }
   if (['G3狀態','g3狀態'].includes(text)) {
     const s = await g3Status(db);
-    return p.commit(`G3 賽程：${s.period_start || '未讀取'}～${s.period_end || '未讀取'}\n已記錄 ${s.events} 場\n最後更新：${s.last_success ? new Date(s.last_success * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '尚未完成'}\n來源狀態：${s.last_error || '正常'}${s.last_error === 'G3_PERIOD_STALE' ? '（需核對最新一期官方表單網址）' : s.last_error === 'G3_WEEKEND_NOT_COVERED' ? '（已讀取，但來源未涵蓋整個週末）' : ''}\n待核對：${s.warnings.length} 筆（年份與表單不符，未列入賽程）\n手動更新：${s.refresh_requested > s.refresh_handled ? '等待執行' : s.last_error ? '已執行但失敗，等待重試' : '已完成'}\n讀取失敗每小時重試；管理員可輸入「重新整理G3」。\n每週一台灣時間 09:00 推播至已啟用 /monitor on 的群組。`);
+    return p.commit(`G3 賽程：${s.period_start || '未讀取'}～${s.period_end || '未讀取'}\n已記錄 ${s.events} 場\n最後更新：${s.last_success ? new Date(s.last_success * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '尚未完成'}\n來源狀態：${s.last_error || '正常'}${s.last_error === 'G3_PERIOD_STALE' ? '（需核對最新一期官方表單網址）' : s.last_error === 'G3_WEEKEND_NOT_COVERED' ? '（已讀取，但來源未涵蓋整個週末）' : ''}\n公告檢查：${s.discovery_message}\n公告最後成功：${s.discovery_success ? new Date(s.discovery_success*1000).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'}) : '尚未完成'}\n公告期間：${s.discovery_period || '尚未確認'}\n待核對：${s.warnings.length} 筆（年份與表單不符，未列入賽程）\n手動更新：${s.refresh_requested > s.refresh_handled ? '等待執行' : s.last_error || s.discovery_error ? '已執行，部分失敗；請看上方狀態' : '已完成'}\n讀取失敗每小時重試；管理員可輸入「重新整理G3」。\n每週一台灣時間 09:00 推播至已啟用 /monitor on 的群組。`);
   }
   if (/^重新整理\s*G3$/i.test(text.normalize('NFKC')) || text === '/admin g3 refresh') return adminPlan(db, env, event, '/admin g3 refresh', p);
   const regionalG3 = await g3RegionReply(db, text);

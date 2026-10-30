@@ -1,3 +1,4 @@
+import { discoverG3, discoveryLabel } from './g3-discovery.js';
 // 官方 Facebook 公告連結的公開試算表；不讀取群組聊天、不使用生成式 AI。
 export const G3_SOURCES = [
   { id: '16J7KBQ-B_aCf-0Hc9fhHBkT7e6XfhA2bFJehqGnmkwY', name: 'Funbox', year: 2026, first: 9 },
@@ -33,10 +34,11 @@ function csv(text) {
 }
 
 // Keep the previous period during a crossing weekend; import verified future periods early.
-function activeSources(now = Date.now()) {
+async function activeSources(db, now = Date.now()) {
   const date = local(now);
   const monday = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() - (date.getUTCDay() + 6) % 7));
-  return G3_SOURCES.filter(s => Date.UTC(s.year, s.first + 1, 0) >= monday.getTime());
+  const stored = (await db.prepare('SELECT sheet_id AS id,name,year,first FROM g3_sources ORDER BY year,first,name').all()).results;
+  return stored.filter(s => Date.UTC(s.year, s.first + 1, 0) >= monday.getTime());
 }
 async function readSource(source, now) {
   const response = await fetch('https://docs.google.com/spreadsheets/d/' + source.id + '/export?format=csv',
@@ -48,6 +50,8 @@ async function readSource(source, now) {
   const title = rows.slice(0, 5).flat().find(c => /G3/.test(c) && /20\d{2}/.test(c));
   const period = title?.match(/(20\d{2})\s*(\d{1,2})\s*[~～\-–]\s*(\d{1,2})/);
   if (!period) throw new Error('G3_PERIOD_MISSING');
+  const kind = /B4/.test(title) ? 'B4合作據點' : /門市/.test(title) ? 'Funbox' : /官方G3活動時間.*通路版本/.test(title) ? '夾子園' : null;
+  if (kind !== source.name) throw new Error('G3_HEADER_CHANGED');
   const year = Number(period[1]), first = Number(period[2]), last = Number(period[3]);
   if (year !== source.year || first !== source.first || last !== first + 1) throw new Error('G3_PERIOD_STALE');
   const headerIndex = rows.findIndex(r => r.includes('店家地址') && r.includes('店家名稱'));
@@ -96,7 +100,7 @@ async function readSource(source, now) {
 
 async function refresh(db, owner, now) {
   // 任一來源失敗即保留整批舊資料，避免誤認某地區沒有賽事。
-  const sources = activeSources(now);
+  const sources = await activeSources(db,now);
   if (!sources.length) throw new Error('G3_PERIOD_STALE');
   const snapshots = await Promise.all(sources.map(source => readSource(source, now)));
   const periods = [...new Map(snapshots.map(s => [s.start, s])).values()].sort((a,b) => a.start.localeCompare(b.start));
@@ -116,10 +120,10 @@ async function refresh(db, owner, now) {
 }
 
 export async function g3Status(db) {
-  const state = await db.prepare('SELECT period_start,period_end,last_success,last_error,last_attempt,refresh_requested,refresh_handled,weekly_ready,warnings_json FROM g3_state WHERE id=1').first();
+  const state = await db.prepare('SELECT period_start,period_end,last_success,last_error,last_attempt,refresh_requested,refresh_handled,weekly_ready,warnings_json,discovery_attempt,discovery_success,discovery_error,discovery_post,discovery_period FROM g3_state WHERE id=1').first();
   const count = await db.prepare('SELECT COUNT(*) AS count FROM g3_events WHERE active=1').first();
-  return { ...state, warnings: JSON.parse(state.warnings_json || '[]'), events: count.count, regions: REGIONS, timezone: 'Asia/Taipei',
-    weekly_push: '星期一 09:00', sources: activeSources().map(s => ({ name: s.name + ' ' + s.year + '/' + s.first + '–' + (s.first+1), url: sourceURL(s) })) };
+  return { ...state, discovery_message: state.discovery_error ? discoveryLabel(state.discovery_error) : state.discovery_success ? '已核對公開公告' : '尚未檢查', warnings: JSON.parse(state.warnings_json || '[]'), events: count.count, regions: REGIONS, timezone: 'Asia/Taipei',
+    weekly_push: '星期一 09:00', sources: (await activeSources(db)).map(s => ({ name: s.name + ' ' + s.year + '/' + s.first + '–' + (s.first+1), url: sourceURL(s) })) };
 }
 
 const REGION_QUERIES = Object.fromEntries(REGIONS.flatMap(r => [[r,[r]], [r.slice(0,-1),[r]]]));
@@ -194,6 +198,33 @@ async function deliver(db, env, owner) {
   }
 }
 
+async function checkAnnouncement(db,env,owner,now,state,week) {
+  const today = day(local(now));
+  const attempts = state.discovery_day === today ? state.discovery_runs : 0;
+  if (attempts >= 6) {
+    await sql(db,'UPDATE g3_state SET discovery_attempt=unixepoch(),discovery_error=? WHERE id=1 AND '+guard,'G3_DISCOVERY_DAILY_LIMIT',owner).run();
+    return false;
+  }
+  await sql(db,'UPDATE g3_state SET discovery_attempt=unixepoch(),discovery_day=?,discovery_runs=? WHERE id=1 AND '+guard,today,attempts+1,owner).run();
+  try {
+    const found = await discoverG3(env,now);
+    const latest = await db.prepare('SELECT year,first FROM g3_sources ORDER BY year DESC,first DESC LIMIT 1').first();
+    if (latest && found.year*12+found.first < latest.year*12+latest.first) throw Error('G3_DISCOVERY_OLDER');
+    try { await Promise.all(found.sources.map(source => readSource(source,now))); }
+    catch { throw Error('G3_DISCOVERY_VALIDATION_FAILED'); }
+    const queries = found.sources.map(s => sql(db,
+      'INSERT INTO g3_sources(year,first,name,sheet_id,post_url) SELECT ?,?,?,?,? WHERE '+guard+
+      ' ON CONFLICT(year,first,name) DO UPDATE SET sheet_id=excluded.sheet_id,post_url=excluded.post_url',s.year,s.first,s.name,s.id,found.url,owner));
+    queries.push(sql(db,'UPDATE g3_state SET discovery_success=unixepoch(),discovery_error=NULL,discovery_week=?,discovery_post=?,discovery_period=? WHERE id=1 AND '+guard,week,found.url,found.year+'/'+found.first+'–'+(found.first+1),owner));
+    await db.batch(queries);
+    return true;
+  } catch(error) {
+    const code = /^G3_DISCOVERY_[A-Z_]+$/.test(error.message) ? error.message : 'G3_DISCOVERY_UNAVAILABLE';
+    await sql(db,'UPDATE g3_state SET discovery_error=? WHERE id=1 AND '+guard,code,owner).run();
+    return false;
+  }
+}
+
 export async function scheduledG3(env, now = Date.now()) {
   const db = env.DB.withSession('first-primary'), owner = crypto.randomUUID();
   const state = await sql(db,'UPDATE g3_state SET lease_owner=?,lease_until=unixepoch()+240 WHERE id=1 AND lease_until<unixepoch() RETURNING *',owner).first();
@@ -206,7 +237,12 @@ export async function scheduledG3(env, now = Date.now()) {
     const weeklyDue = date.getTime() >= monday.getTime() + 9 * 3600000;
     const firstOdd = date.getUTCDate() === 1 && (date.getUTCMonth() + 1) % 2 === 1;
     const manual = state.refresh_requested > state.refresh_handled;
-    const refreshDue = manual || !state.last_success || state.last_error ||
+    const discoveryDue = manual || (weeklyDue && state.discovery_week !== week) || !!state.discovery_error;
+    let discovered = false;
+    if (discoveryDue && (manual || now/1000-state.discovery_attempt >= 3600)) {
+      discovered = await checkAnnouncement(db,env,owner,now,state,week);
+    }
+    const refreshDue = discovered || manual || !state.last_success || state.last_error ||
       (weeklyDue && state.weekly_ready !== week) ||
       (date.getUTCHours() >= 8 && state.refresh_day !== today) ||
       (firstOdd && date.getUTCHours() >= 8 && state.refresh_day !== today);
