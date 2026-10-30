@@ -1,0 +1,1 @@
+ALTER TABLE g3_state ADD COLUMN warnings_json TEXT NOT NULL DEFAULT '[]';

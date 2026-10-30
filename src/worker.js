@@ -182,9 +182,9 @@ async function buildReply(db, env, event) {
   if (['本週G3','本週g3','G3','g3'].includes(text)) { const summary = await g3Weekend(db); return p.commit(summary.text, null, [], g3Messages(summary)); }
   if (['G3狀態','g3狀態'].includes(text)) {
     const s = await g3Status(db);
-    return p.commit(`G3 賽程：${s.period_start || '未讀取'}～${s.period_end || '未讀取'}\n已記錄 ${s.events} 場\n最後更新：${s.last_success ? new Date(s.last_success * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '尚未完成'}\n來源狀態：${s.last_error || '正常'}\n手動更新：${s.refresh_requested > s.refresh_handled ? '等待執行' : '無待處理請求'}\n讀取失敗每小時重試；管理員可輸入「重新整理G3」。\n每週一台灣時間 09:00 推播至已啟用 /monitor on 的群組。`);
+    return p.commit(`G3 賽程：${s.period_start || '未讀取'}～${s.period_end || '未讀取'}\n已記錄 ${s.events} 場\n最後更新：${s.last_success ? new Date(s.last_success * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }) : '尚未完成'}\n來源狀態：${s.last_error || '正常'}${s.last_error === 'G3_PERIOD_STALE' ? '（需核對最新一期官方表單網址）' : s.last_error === 'G3_WEEKEND_NOT_COVERED' ? '（已讀取，但來源未涵蓋整個週末）' : ''}\n待核對：${s.warnings.length} 筆（年份與表單不符，未列入賽程）\n手動更新：${s.refresh_requested > s.refresh_handled ? '等待執行' : s.last_error ? '已執行但失敗，等待重試' : '已完成'}\n讀取失敗每小時重試；管理員可輸入「重新整理G3」。\n每週一台灣時間 09:00 推播至已啟用 /monitor on 的群組。`);
   }
-  if (/^重新整理\s*G3$/i.test(text) || text === '/admin g3 refresh') return adminPlan(db, env, event, '/admin g3 refresh', p);
+  if (/^重新整理\s*G3$/i.test(text.normalize('NFKC')) || text === '/admin g3 refresh') return adminPlan(db, env, event, '/admin g3 refresh', p);
   const regionalG3 = await g3RegionReply(db, text);
   if (regionalG3 !== null) return typeof regionalG3 === 'string' ? p.commit(regionalG3) : p.commit(regionalG3.text, null, [], g3Messages(regionalG3));
   if (text.startsWith('/monitor')) return monitorCommand(db, env, event, text, p);
