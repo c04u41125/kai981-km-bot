@@ -35,7 +35,7 @@ async function catalog() {
     const response = await fetch(`https://shop.funbox.com.tw/category_products/XI/KB.json?limit=18&page=${page}&sort_by=sell_from-desc`, {
       headers: { Accept: 'application/json', 'User-Agent': 'kai981-km-bot-monitor/1.0' }, signal: AbortSignal.timeout(15000)
     }).catch(() => { throw new Error('SOURCE_NETWORK_ERROR'); });
-    if (!response.ok) throw new Error('SOURCE_HTTP_ERROR');
+    if (!response.ok) throw new Error('SOURCE_HTTP_' + response.status);
     const finalUrl = new URL(response.url);
     if (finalUrl.origin !== 'https://shop.funbox.com.tw' || !finalUrl.pathname.startsWith('/category_products/')) throw new Error('SOURCE_REDIRECT');
     if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('SOURCE_FORMAT_CHANGED');
@@ -118,7 +118,7 @@ export async function scheduledMonitor(env) {
   try {
     try { await scan(db, owner); }
     catch (error) {
-      const code = /^SOURCE_[A-Z_]+$/.test(error.message) ? error.message : 'MONITOR_SCAN_FAILED';
+      const code = /^SOURCE_[A-Z_0-9]+$/.test(error.message) ? error.message : 'MONITOR_SCAN_FAILED';
       await sql(db, "UPDATE monitor_state SET last_error=? WHERE id='funbox' AND lease_owner=?", code, owner).run();
       console.warn(JSON.stringify({ code }));
     }
