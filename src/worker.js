@@ -1,7 +1,7 @@
 import { wishlistCommand } from './wishlist.js';
 import { wishPostback } from './wishlist-ui.js';
 import { bracketAPI, bracketCommand } from './brackets.js';
-import { monitorCommand, monitorStatus, scheduledMonitor } from './monitor.js';
+import { monitorCommand, monitorStatus, scheduledMonitor, acceptMonitorSnapshot } from './monitor.js';
 import { scheduledG3, g3Status, g3Weekend, g3RegionReply, g3Messages } from './g3.js';
 import { marketReply } from './market.js';
 const COMMAND_HELP = String.raw`可用指令：
@@ -295,7 +295,9 @@ export default {
     try {
       // 從 primary 開始讀取，避免已開啟 D1 read replication 時讀到舊狀態。
       const db = env.DB.withSession('first-primary');
-      if (url.pathname === '/api/brackets' || url.pathname.startsWith('/api/brackets/')) {
+      if (url.pathname === '/internal/monitor/snapshot') {
+        response = request.method === 'POST' ? await acceptMonitorSnapshot(await readBody(request,4*1024*1024),request.headers.get('x-monitor-signature'),env,db) : json({error:'Method not allowed'},405);
+      } else if (url.pathname === '/api/brackets' || url.pathname.startsWith('/api/brackets/')) {
         response = await bracketAPI(request,env,db);
       } else if (url.pathname === '/g3') {
         const destination = new URL('https://c04u41125.github.io/KAI-981/g3.html');
