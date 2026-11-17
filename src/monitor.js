@@ -20,7 +20,7 @@ export async function monitorCommand(db, env, event, text, plan) {
     const sub = await sql(db, 'SELECT enabled FROM monitor_subscriptions WHERE target_id=?', target).first();
     const pending = await sql(db, "SELECT COUNT(*) AS count FROM monitor_outbox WHERE target_id=? AND status='pending' AND product_id NOT LIKE 'mm:%'", target).first();
     const failed = await sql(db, "SELECT COUNT(*) AS count FROM monitor_outbox WHERE target_id=? AND status='failed' AND product_id NOT LIKE 'mm:%'", target).first();
-    return plan.commit(`Funbox 新品監測\n本群組：${sub?.enabled ? '已訂閱' : '未訂閱'}\n每分鐘檢查，非即時保證。\n讀取方式：${state.transport === 'local' ? '本機備援（電腦須開機連網）' : state.transport === 'browser' ? '瀏覽器備援（每日額度有限）' : '雲端直接讀取'}\n已記錄：${state.known_products} 件\n最後成功：${state.last_success ? new Date(state.last_success * 1000).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}) : '尚未完成'}\n狀態：${state.stale ? '已超過 3 分鐘未更新；可能漏報。' : ''}${state.last_error || (state.stale ? '' : '正常')}\n待送：${pending.count}，失敗：${failed.count}\n來源：${SOURCE}`);
+    return plan.commit(`Funbox 新品監測\n本群組：${sub?.enabled ? '已訂閱' : '未訂閱'}\n每分鐘檢查，非即時保證。\n讀取方式：${state.transport === 'chrome' ? 'Chrome 整合監控（Chrome 須保持開啟）' : state.transport === 'local' ? '本機備援（電腦須開機連網）' : state.transport === 'browser' ? '瀏覽器備援（每日額度有限）' : '雲端直接讀取'}\n已記錄：${state.known_products} 件\n最後成功：${state.last_success ? new Date(state.last_success * 1000).toLocaleString('zh-TW',{timeZone:'Asia/Taipei',hour12:false}) : '尚未完成'}\n狀態：${state.stale ? '已超過 3 分鐘未更新；可能漏報。' : ''}${state.last_error || (state.stale ? '' : '正常')}\n待送：${pending.count}，失敗：${failed.count}\n來源：${SOURCE}`);
   }
   if (!['/monitor on','/monitor off'].includes(text)) return plan.commit('監測指令：/monitor on、/monitor off、/monitor status。');
   const enabled = text.endsWith(' on') ? 1 : 0;
@@ -104,7 +104,7 @@ async function persistCatalog(db, owner, products, transport, observedAt = 0) {
       ON CONFLICT(product_id) DO UPDATE SET title=excluded.title,url=excluded.url,price=excluded.price`, p.id, p.title, p.url, p.price, owner));
   }
   queries.push(sql(db, `UPDATE monitor_state SET initialized=1,last_success=unixepoch(),last_error=NULL,transport=? WHERE id='funbox' AND lease_owner=? AND lease_until>unixepoch()`, transport, owner));
-  if (transport === 'local') queries.push(sql(db, `UPDATE monitor_state SET last_local_success=unixepoch(),last_local_observed=? WHERE id='funbox' AND lease_owner=? AND lease_until>unixepoch()`,observedAt,owner));
+  if (['local','chrome'].includes(transport)) queries.push(sql(db, `UPDATE monitor_state SET last_local_success=unixepoch(),last_local_observed=? WHERE id='funbox' AND lease_owner=? AND lease_until>unixepoch()`,observedAt,owner));
   try { await db.batch(queries); }
   catch (error) {
     // 本區僅有公開商品 SQL，不包含 LINE 憑證或收件者值。
@@ -130,7 +130,7 @@ export async function acceptMonitorSnapshot(raw, signature, env, db) {
   const claimed = await sql(db, `UPDATE monitor_state SET lease_owner=?,lease_until=unixepoch()+60 WHERE id='funbox' AND lease_until<unixepoch() AND last_local_observed<? RETURNING id`,owner,snapshot.observedAt).first();
   if (!claimed) return reply({error:'Busy or stale snapshot'},409);
   try {
-    await persistCatalog(db,owner,products,'local',snapshot.observedAt);
+    await persistCatalog(db,owner,products,snapshot.client === 'chrome' ? 'chrome' : 'local',snapshot.observedAt);
     await deliver(db,env,owner);
     return reply({ok:true,products:products.length});
   } finally {
