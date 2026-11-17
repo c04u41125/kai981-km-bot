@@ -1,9 +1,16 @@
 $ErrorActionPreference = 'Stop'
 $runtimeDir = Join-Path $env:LOCALAPPDATA 'KAI981Monitor'
 $logPath = Join-Path $runtimeDir 'status.json'
+$historyDir = Join-Path $runtimeDir 'logs'
+New-Item -ItemType Directory -Force $historyDir | Out-Null
+$runId = [guid]::NewGuid().ToString()
+function Write-MonitorLog($eventName, $detail) {
+    @{time=[DateTimeOffset]::UtcNow.ToString('o');run=$runId;event=$eventName;detail=$detail} | ConvertTo-Json -Compress -Depth 5 | Add-Content (Join-Path $historyDir ((Get-Date -Format 'yyyy-MM-dd')+'.jsonl')) -Encoding UTF8
+}
 $lock = New-Object System.Threading.Mutex($false, 'Local\KAI981FunboxMonitor')
 if (!$lock.WaitOne(0)) { $lock.Dispose(); exit 0 }
 try {
+    Write-MonitorLog 'scan_start' @{}
     $phase='fetch'
     $observedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     $pages = New-Object System.Collections.Generic.List[object]
@@ -13,10 +20,13 @@ try {
         $response = $null
         for ($attempt = 0; $attempt -lt 3; $attempt++) {
             try {
+                Write-MonitorLog 'source_attempt' @{page=$page;attempt=($attempt+1)}
                 $response = Invoke-WebRequest $url -UseBasicParsing -TimeoutSec 10 -Headers @{Accept='application/json'; Referer='https://shop.funbox.com.tw/categories/XI/KB'; 'Cache-Control'='no-cache'}
+                Write-MonitorLog 'source_response' @{page=$page;http=[int]$response.StatusCode}
                 break
             } catch {
                 $httpCode = [int]$_.Exception.Response.StatusCode
+                Write-MonitorLog 'source_error' @{page=$page;attempt=($attempt+1);http=$httpCode}
                 if ($attempt -eq 2 -or ($httpCode -ne 0 -and $httpCode -notin @(403,502,503,504))) { throw 'Source unavailable' }
                 Start-Sleep -Seconds (1 + 2*$attempt)
             }
@@ -30,6 +40,7 @@ try {
             @{id=$_.id; title=$_.title; url=$_.url; price=$price}
         })
         $pages.Add($reduced)
+        Write-MonitorLog 'page_parsed' @{page=$page;count=$rows.Count;ids=@($rows | ForEach-Object {$_.id})}
         if ($rows.Count -lt 18) { $complete=$true; break }
     }
     if (!$complete -or @($pages[0]).Count -eq 0) { throw 'Incomplete catalog' }
@@ -46,17 +57,21 @@ try {
     $result = $null
     for ($attempt=0; $attempt -lt 3; $attempt++) {
         try {
+            Write-MonitorLog 'relay_attempt' @{attempt=($attempt+1)}
             $result = Invoke-RestMethod 'https://kai981-km-bot.kai981-km-bot.workers.dev/internal/monitor/snapshot' -Method Post -Body $bytes -ContentType 'application/json; charset=utf-8' -Headers @{'x-monitor-signature'=$signature} -TimeoutSec 20
             break
         } catch {
             $relayHttpCode=[int]$_.Exception.Response.StatusCode
+            Write-MonitorLog 'relay_error' @{attempt=($attempt+1);http=$relayHttpCode}
             if ($attempt -eq 2 -or $relayHttpCode -ne 409) { throw 'Relay rejected or unavailable' }
             Start-Sleep -Seconds 3
         }
     }
     if (!$result.ok) { throw 'Relay did not accept catalog' }
+    Write-MonitorLog 'scan_success' @{products=$result.products;observedAt=$observedAt}
     @{ok=$true; observedAt=$observedAt; completedAt=[DateTimeOffset]::UtcNow.ToString('o'); products=$result.products} | ConvertTo-Json | Set-Content $logPath -Encoding UTF8
 } catch {
+    Write-MonitorLog 'scan_failed' @{phase=$phase;http=$relayHttpCode;line=$_.InvocationInfo.ScriptLineNumber;exception=$_.Exception.GetType().Name}
     # No credentials, headers, signed payloads or raw HTTP errors in logs.
     @{ok=$false; completedAt=[DateTimeOffset]::UtcNow.ToString('o'); error='MONITOR_LOCAL_FAILED'; phase=$phase; http=$relayHttpCode; line=$_.InvocationInfo.ScriptLineNumber; exception=$_.Exception.GetType().Name} | ConvertTo-Json | Set-Content $logPath -Encoding UTF8
     exit 1
